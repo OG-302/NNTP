@@ -21,7 +21,7 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
 
     private static final Logger logger = LoggerFactory.getLogger(MockPersistenceService.class);
 
-    private static final String dbName = "test/db";
+    private static final String dbName = "dataSources/nntp-db";
     private static final String dbPath = "jdbc:hsqldb:file:";
     private static final String url = dbPath + dbName;
 
