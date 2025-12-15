@@ -54,7 +54,7 @@ public class MockIdentityService implements IdentityService {
             hostname = "localhost";
         }
 
-        MessageDigest md = null;
+        MessageDigest md;
         try {
             md = MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
@@ -67,7 +67,7 @@ public class MockIdentityService implements IdentityService {
     }
 
     @Override
-    public void close() throws Exception {
+    public void close() {
         closed = true;
     }
 

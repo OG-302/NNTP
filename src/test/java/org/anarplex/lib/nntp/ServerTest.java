@@ -47,7 +47,7 @@ class ServerTest {
     @Test
     void testHandleQuit() throws Exception {
         // Set up test data
-        try (MockPersistenceService persistenceService = new MockPersistenceService();) {
+        try (MockPersistenceService persistenceService = new MockPersistenceService()) {
 
             persistenceService.init();
 
@@ -222,16 +222,13 @@ class ServerTest {
                 String response = responseWriter.toString();
                 assertEquals("205\r\n", response);
             }
-
-            // Clean up
-            persistenceService.close();
         }
     }
 
     @Test
-    void nonExistentCommand() throws IOException {
+    void nonExistentCommand() {
         try (
-                PersistenceService persistenceService = new MockPersistenceService();
+                PersistenceService persistenceService = new MockPersistenceService()
         ) {
             MockIdentityService identityService = new MockIdentityService();
             MockPolicyService policyService = new MockPolicyService();
@@ -258,7 +255,7 @@ class ServerTest {
         try (
                 MockIdentityService identityService = new MockIdentityService();
                 PersistenceService persistenceService = new MockPersistenceService();
-                MockPolicyService policyService = new MockPolicyService();
+                MockPolicyService policyService = new MockPolicyService()
         ) {
 
             String inputString = "\r\n";
@@ -284,7 +281,7 @@ class ServerTest {
     @Test
     void testHandleArticle() throws Exception {
         // Set up test data
-        try (MockPersistenceService persistenceService = new MockPersistenceService();) {
+        try (MockPersistenceService persistenceService = new MockPersistenceService()) {
             persistenceService.init();
 
             long l = System.currentTimeMillis();
@@ -495,16 +492,13 @@ class ServerTest {
                 String response = responseWriter.toString();
                 assertTrue(response.startsWith("501"), "Expected 501 for too many arguments, got: " + response);
             }
-
-            // Clean up
-            persistenceService.close();
         }
     }
 
     @Test
     void testHandleBody() throws Exception {
         // Set up test data
-        try (MockPersistenceService persistenceService = new MockPersistenceService();) {
+        try (MockPersistenceService persistenceService = new MockPersistenceService()) {
             persistenceService.init();
 
             // Create a test newsgroup
@@ -577,7 +571,9 @@ class ServerTest {
                         "nntp-test",
                         false
                 );
-                context.currentGroup = emptyGroup;
+                if (emptyGroup != null) {
+                    context.currentGroup = emptyGroup;
+                }
 
                 Boolean result = Server.handleBody(context);
                 assertTrue(result);
@@ -762,16 +758,13 @@ class ServerTest {
                 assertTrue(articleResponse.length() > bodyResponse.length(),
                         "ARTICLE response should be longer than BODY response (includes headers)");
             }
-
-            // Clean up
-            persistenceService.close();
         }
     }
 
     @Test
     void testHandleHead() throws Exception {
         // Set up test data
-        try (MockPersistenceService persistenceService = new MockPersistenceService();) {
+        try (MockPersistenceService persistenceService = new MockPersistenceService()) {
             persistenceService.init();
 
             // Create a test newsgroup with unique name
@@ -844,7 +837,9 @@ class ServerTest {
                         "nntp-test",
                         false
                 );
-                context.currentGroup = emptyGroup;
+                if (emptyGroup != null) {
+                    context.currentGroup = emptyGroup;
+                }
 
                 Boolean result = Server.handleHead(context);
                 assertTrue(result);
@@ -1057,16 +1052,13 @@ class ServerTest {
                 assertTrue(headResponse.length() > bodyResponse.length(),
                         "HEAD response should be longer than BODY response (has headers, not body)");
             }
-
-            // Clean up
-            persistenceService.close();
         }
     }
 
     @Test
     void testHandleStat() throws Exception {
         // Set up test data
-        try (MockPersistenceService persistenceService = new MockPersistenceService();) {
+        try (MockPersistenceService persistenceService = new MockPersistenceService()) {
             persistenceService.init();
 
             // Create a test newsgroup with unique name
@@ -1382,9 +1374,6 @@ class ServerTest {
                 assertTrue(response.contains(testMessageId.getValue()),
                         "Response should contain the message-id");
             }
-
-            // Clean up
-            persistenceService.close();
         }
     }
 
@@ -1640,9 +1629,6 @@ class ServerTest {
                 int second = Integer.parseInt(secondStr);
                 assertTrue(second >= 0 && second <= 59, "Second should be 00-59: " + secondStr);
             }
-
-            // Clean up
-            persistenceService.close();
         }
     }
 
@@ -1690,7 +1676,7 @@ class ServerTest {
     @Test
     void testHandleIHave() throws Exception {
         // Set up the database and persistence service
-        try (MockPersistenceService dbSvc = new MockPersistenceService();) {
+        try (MockPersistenceService dbSvc = new MockPersistenceService()) {
             dbSvc.init();
 
             // Create a test newsgroup
@@ -1725,7 +1711,7 @@ class ServerTest {
             context.requestArgs = new String[]{"IHAVE", messageIdStr};
 
             // First call should return 335 (send article)
-            Boolean result = Server.handleIHave(context);
+            boolean result = Server.handleIHave(context);
             assertTrue(result);
             String response = responseWriter.toString();
             assertTrue(response.contains("335") && response.contains("235"), "Should request article with 335 code and accept with 235");
@@ -1884,7 +1870,7 @@ class ServerTest {
     @DisplayName("Test GROUP command - successful selection")
     void testHandleGroup() throws Exception {
         // Setup persistence service with a test newsgroup
-        try (MockPersistenceService dbSvc = new MockPersistenceService();) {
+        try (MockPersistenceService dbSvc = new MockPersistenceService()) {
             dbSvc.init();
 
             // Create a test newsgroup
@@ -1934,8 +1920,8 @@ class ServerTest {
     
     @Test
     @DisplayName("Test GROUP command - newsgroup doesn't exist")
-    void testHandleGroupNonExistent() throws Exception {
-        try (MockPersistenceService dbSvc = new MockPersistenceService();) {
+    void testHandleGroupNonExistent()  {
+        try (MockPersistenceService dbSvc = new MockPersistenceService()) {
             dbSvc.init();
             String groupName = "local.tmp.test.group.nonexistent";
 
@@ -1959,7 +1945,7 @@ class ServerTest {
     @Test
     @DisplayName("Test GROUP command - empty newsgroup")
     void testHandleGroupEmpty() throws Exception {
-        try (MockPersistenceService dbSvc = new MockPersistenceService();){
+        try (MockPersistenceService dbSvc = new MockPersistenceService()) {
             dbSvc.init();
 
             // Create an empty newsgroup
@@ -1996,8 +1982,8 @@ class ServerTest {
     
     @Test
     @DisplayName("Test GROUP command - syntax error (no arguments)")
-    void testHandleGroupNoArguments() throws Exception {
-        try (MockPersistenceService dbSvc = new MockPersistenceService();) {
+    void testHandleGroupNoArguments() {
+        try (MockPersistenceService dbSvc = new MockPersistenceService()) {
             dbSvc.init();
 
             StringReader requestReader = new StringReader("GROUP\r\n");
@@ -2016,8 +2002,8 @@ class ServerTest {
     
     @Test
     @DisplayName("Test GROUP command - syntax error (too many arguments)")
-    void testHandleGroupTooManyArguments() throws Exception {
-        try (MockPersistenceService dbSvc = new MockPersistenceService();) {
+    void testHandleGroupTooManyArguments() {
+        try (MockPersistenceService dbSvc = new MockPersistenceService()) {
             dbSvc.init();
 
             StringReader requestReader = new StringReader("GROUP test.group extra\r\n");
@@ -2036,8 +2022,8 @@ class ServerTest {
     
     @Test
     @DisplayName("Test GROUP command - invalid newsgroup name")
-    void testHandleGroupInvalidName() throws Exception {
-        try (MockPersistenceService dbSvc = new MockPersistenceService();) {
+    void testHandleGroupInvalidName() {
+        try (MockPersistenceService dbSvc = new MockPersistenceService()) {
 
             dbSvc.init();
 
@@ -2059,7 +2045,7 @@ class ServerTest {
     @Test
     @DisplayName("Test GROUP command - ignored newsgroup")
     void testHandleGroupIgnored() throws Exception {
-        try (MockPersistenceService dbSvc = new MockPersistenceService();) {
+        try (MockPersistenceService dbSvc = new MockPersistenceService()) {
             dbSvc.init();
 
             // Create a newsgroup and mark it as ignored
@@ -2177,7 +2163,7 @@ class ServerTest {
     @Test
     void testHandleLast() throws Exception {
         // Set up test data
-        try (MockPersistenceService persistenceService = new MockPersistenceService();) {
+        try (MockPersistenceService persistenceService = new MockPersistenceService()) {
             persistenceService.init();
 
             // Create a test newsgroup with unique name
@@ -2567,7 +2553,7 @@ class ServerTest {
     @DisplayName("Test LIST command - basic (LIST ACTIVE)")
     void testHandleList() throws Exception {
         // Create mock persistence services
-        try (MockPersistenceService dbSvc = new MockPersistenceService();) {
+        try (MockPersistenceService dbSvc = new MockPersistenceService()) {
 
             // Add some test newsgroups
             long l = System.currentTimeMillis();
@@ -2699,7 +2685,7 @@ class ServerTest {
 
     @Test
     @DisplayName("Test LIST with too many arguments")
-    void testHandleListTooManyArguments() throws Exception {
+    void testHandleListTooManyArguments() {
         try (MockPersistenceService dbSvc = new MockPersistenceService()) {
 
             StringWriter responseWriter = new StringWriter();
@@ -2717,7 +2703,7 @@ class ServerTest {
 
     @Test
     @DisplayName("Test LIST with unsupported variant")
-    void testHandleListUnsupportedVariant() throws Exception {
+    void testHandleListUnsupportedVariant() {
         try (MockPersistenceService dbSvc = new MockPersistenceService()) {
 
             StringWriter responseWriter = new StringWriter();
@@ -2735,7 +2721,7 @@ class ServerTest {
 
     @Test
     @DisplayName("Test LIST with empty newsgroup list")
-    void testHandleListEmptyNewsgroupList() throws Exception {
+    void testHandleListEmptyNewsgroupList() {
         try (MockPersistenceService dbSvc = new MockPersistenceService()) {
 
             // Don't add any newsgroups, but do know how many newsgroups there are

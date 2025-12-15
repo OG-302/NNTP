@@ -5,9 +5,9 @@ import java.net.ServerSocket;
 
 public interface NetworkUtils {
 
-    static String PROTOCOL_TCP = "tcp";
-    static String PROTOCOL_UDP = "udp";
-    static int DEFAULT_PORT = 119;
+    String PROTOCOL_TCP = "tcp";
+    String PROTOCOL_UDP = "udp";
+    int DEFAULT_PORT = 119;
 
     /**
      * Open a server socket for listening.
