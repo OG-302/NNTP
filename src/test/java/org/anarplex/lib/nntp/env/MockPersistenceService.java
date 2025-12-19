@@ -1,6 +1,6 @@
-package org.anarplex.lib.nntp.ext;
+package org.anarplex.lib.nntp.env;
 
-import org.anarplex.lib.nntp.Spec;
+import org.anarplex.lib.nntp.Specification;
 import org.anarplex.lib.nntp.utils.ResultSetIterator;
 import org.apache.commons.dbcp2.BasicDataSource;
 import org.apache.logging.log4j.core.util.IOUtils;
@@ -220,26 +220,26 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
     }
 
 
-    public static class ArticleRecord extends Spec.Article implements Article {
+    public static class ArticleRecord extends Specification.Article implements Article {
         final private Connection dbConnection;
         final int articlePK;
-        final Spec.MessageId messageId;
+        final Specification.MessageId messageId;
         private ArticleHeaders headerValues;
 
-        ArticleRecord(Connection dbConnection, int articlePK, String messageId) throws Spec.MessageId.InvalidMessageIdException {
+        ArticleRecord(Connection dbConnection, int articlePK, String messageId) throws Specification.MessageId.InvalidMessageIdException {
             this.dbConnection = dbConnection;
             this.articlePK = articlePK;
-            this.messageId = new Spec.MessageId(messageId);
+            this.messageId = new Specification.MessageId(messageId);
         }
 
 
-        // not used
+        /* Calling the constructor is forbidden.  New instances are returned from various methods. */
         private ArticleRecord() {
             throw new IllegalStateException("Not used");
         }
 
         @Override
-        public Spec.MessageId getMessageId() {
+        public Specification.MessageId getMessageId() {
             return messageId;
         }
 
@@ -321,7 +321,7 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
      * @return true if the message id exists, false otherwise
      */
     @Override
-    public boolean hasArticle(Spec.MessageId messageId) {
+    public boolean hasArticle(Specification.MessageId messageId) {
         try (PreparedStatement ps = dbConnection.prepareStatement(
                 "SELECT COUNT(*) FROM NN_ARTICLES WHERE messageID = ? LIMIT 1")) {
 
@@ -344,7 +344,7 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
      * @return the article with the specified article or null if it does not exist
      */
     @Override
-    public ArticleRecord getArticle(Spec.MessageId messageId) {
+    public ArticleRecord getArticle(Specification.MessageId messageId) {
         try (PreparedStatement ps = dbConnection.prepareStatement(
                 "SELECT pk, messageID FROM NN_ARTICLES WHERE messageID = ?")) {
 
@@ -354,7 +354,7 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
             if (rs.next()) {
                 return new ArticleRecord(dbConnection, rs.getInt("pk"), rs.getString("messageID"));
             }
-        } catch (SQLException | Spec.MessageId.InvalidMessageIdException e) {
+        } catch (SQLException | Specification.MessageId.InvalidMessageIdException e) {
             logger.error(e.getMessage(), e);
             throw new RuntimeException(e);
         }
@@ -368,17 +368,17 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
      * @return an iterator over all message ids that were added after the specified time
      */
     @Override
-    public Iterator<Spec.MessageId> getArticleIdsAfter(Date after) {
+    public Iterator<Specification.MessageId> getArticleIdsAfter(Date after) {
         try {
             PreparedStatement ps = dbConnection.prepareStatement(
                     "SELECT messageID FROM NN_ARTICLES WHERE insertionTime > ? ORDER BY insertionTime");
             ps.setLong(1, after.getTime() / 1000);  // seconds since epoch
             ResultSet rs = ps.executeQuery();
 
-            return new ResultSetIterator<Spec.MessageId>(rs, (ResultSetIterator.ResultSetMapper<Spec.MessageId>) resultSet -> {
+            return new ResultSetIterator<Specification.MessageId>(rs, (ResultSetIterator.ResultSetMapper<Specification.MessageId>) resultSet -> {
                     try {
-                        return new Spec.MessageId(rs.getString("messageID"));
-                    } catch (Spec.MessageId.InvalidMessageIdException | SQLException e) {
+                        return new Specification.MessageId(rs.getString("messageID"));
+                    } catch (Specification.MessageId.InvalidMessageIdException | SQLException e) {
                         logger.error(e.getMessage(), e);
                         throw new RuntimeException(e);
                     }
@@ -397,7 +397,7 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
      * @param messageId
      */
     @Override
-    public void rejectArticle(Spec.MessageId messageId) {
+    public void rejectArticle(Specification.MessageId messageId) {
         Article a = getArticle(messageId);
         if (a != null) {
             try (PreparedStatement ps = dbConnection.prepareStatement(
@@ -430,7 +430,7 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
      * @return true if the specified message id has been marked as rejected, false otherwise, null if no such message id exists.
      */
     @Override
-    public Boolean isRejectedArticle(Spec.MessageId messageId) {
+    public Boolean isRejectedArticle(Specification.MessageId messageId) {
         try (PreparedStatement ps = dbConnection.prepareStatement(
                 "SELECT rejected FROM NN_ARTICLES WHERE messageID = ?")) {
             ps.setString(1, messageId.toString());
@@ -457,7 +457,7 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
      * @return the newly created Newsgroup or null if the newsgroup already exists
      */
     @Override
-    public Newsgroup addGroup(Spec.NewsgroupName name, String description, Spec.PostingMode postingMode, Date createdAt, String createdBy, boolean toBeIgnored)
+    public Newsgroup addGroup(Specification.NewsgroupName name, String description, Specification.PostingMode postingMode, Date createdAt, String createdBy, boolean toBeIgnored)
         throws ExistingNewsgroupException
     {
         try (PreparedStatement ps = dbConnection.prepareStatement(
@@ -561,7 +561,7 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
                         resultSet.getString("description"),
                         resultSet.getLong("createdAt"),
                         resultSet.getString("createdBy"));
-            } catch (Spec.NewsgroupName.InvalidNewsgroupNameException | SQLException e) {
+            } catch (Specification.NewsgroupName.InvalidNewsgroupNameException | SQLException e) {
                 logger.error(e.getMessage(), e);
                 throw new RuntimeException(e);
             }
@@ -573,7 +573,7 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
      * @return
      */
     @Override
-    public Newsgroup getGroupByName(Spec.NewsgroupName name) {
+    public Newsgroup getGroupByName(Specification.NewsgroupName name) {
         try (PreparedStatement ps = dbConnection.prepareStatement("SELECT * FROM NN_NEWSGROUPS WHERE name = ?")) {
             ps.setString(1, name.getValue());
             ResultSet rs = ps.executeQuery();
@@ -586,7 +586,7 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
                         rs.getLong("createdAt"),
                         rs.getString("createdBy"));
             }
-        } catch (SQLException | Spec.NewsgroupName.InvalidNewsgroupNameException e) {
+        } catch (SQLException | Specification.NewsgroupName.InvalidNewsgroupNameException e) {
             logger.error(e.getMessage(), e);
             throw new RuntimeException(e);
         }
@@ -680,16 +680,16 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
     public static class NewsgroupRecord implements Newsgroup {
         private final Connection dbConnection;
         private final int pk;
-        private final Spec.NewsgroupName name;
+        private final Specification.NewsgroupName name;
         private final String description;
         private final Date createdAt;
         private final String createdBy;
-        private Spec.ArticleNumber currentArticleNumber;
+        private Specification.ArticleNumber currentArticleNumber;
 
-        NewsgroupRecord(Connection dbConnection, int pk, String name, String description, Long createdAt, String createdBy) throws Spec.NewsgroupName.InvalidNewsgroupNameException {
+        NewsgroupRecord(Connection dbConnection, int pk, String name, String description, Long createdAt, String createdBy) throws Specification.NewsgroupName.InvalidNewsgroupNameException {
             this.dbConnection = dbConnection;
             this.pk = pk;
-            this.name = new Spec.NewsgroupName(name);
+            this.name = new Specification.NewsgroupName(name);
             this.description = description;
             this.createdAt = (createdAt != null ? new Date(createdAt) : null);
             this.createdBy = createdBy;
@@ -701,16 +701,16 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
                 ResultSet rs = ps.executeQuery();
                 if (rs.next()) {
                     int n = rs.getInt(1);
-                    currentArticleNumber = !rs.wasNull() ? new Spec.ArticleNumber(n) : null;
+                    currentArticleNumber = !rs.wasNull() ? new Specification.ArticleNumber(n) : null;
                 }
-            } catch (SQLException | Spec.ArticleNumber.InvalidArticleNumberException e) {
+            } catch (SQLException | Specification.ArticleNumber.InvalidArticleNumberException e) {
                 logger.error(e.getMessage(), e);
                 throw new RuntimeException(e);
             }
         }
 
         @Override
-        public Spec.NewsgroupName getName() {
+        public Specification.NewsgroupName getName() {
             return name;
         }
 
@@ -720,13 +720,13 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
         }
 
         @Override
-        public Spec.PostingMode getPostingMode() {
+        public Specification.PostingMode getPostingMode() {
             try (PreparedStatement ps = dbConnection.prepareStatement(
                     "SELECT postingAllowed FROM NN_NEWSGROUPS WHERE pk = ?")) {
                 ps.setInt(1, pk);
                 ResultSet rs = ps.executeQuery();
                 if (rs.next()) {
-                    return Spec.PostingMode.valueOf(rs.getInt(1));
+                    return Specification.PostingMode.valueOf(rs.getInt(1));
                 }
             } catch (SQLException e) {
                 logger.error(e.getMessage(), e);
@@ -736,7 +736,7 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
         }
 
         @Override
-        public void setPostingMode(Spec.PostingMode postingMode) {
+        public void setPostingMode(Specification.PostingMode postingMode) {
             try (PreparedStatement ps = dbConnection.prepareStatement(
                     "UPDATE NN_NEWSGROUPS SET postingAllowed = ? WHERE pk = ?")) {
                 ps.setInt(1, postingMode.ordinal());
@@ -770,17 +770,17 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
                     if (numArticles > 0) {
                         return new NewsgroupMetrics(  // actual values
                                 numArticles,
-                                new Spec.ArticleNumber(rs.getInt(2)),
-                                new Spec.ArticleNumber(rs.getInt(3))
+                                new Specification.ArticleNumber(rs.getInt(2)),
+                                new Specification.ArticleNumber(rs.getInt(3))
                         );
                     } else {
                         // no articles in this newsgroup.  send back default values
                         return new NewsgroupMetrics(0,
-                                Spec.NoArticlesLowestNumber.getInstance(),
-                                Spec.NoArticlesHighestNumber.getInstance());
+                                Specification.NoArticlesLowestNumber.getInstance(),
+                                Specification.NoArticlesHighestNumber.getInstance());
                     }
                 }
-            } catch (SQLException | Spec.ArticleNumber.InvalidArticleNumberException e) {
+            } catch (SQLException | Specification.ArticleNumber.InvalidArticleNumberException e) {
                 logger.error(e.getMessage(), e);
                 throw new RuntimeException(e);
             }
@@ -790,10 +790,10 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
 
         public static class NewsgroupMetrics implements PersistenceService.NewsgroupMetrics {
             private final int numberOfArticles;
-            private final Spec.ArticleNumber lowestArticleNumber;
-            private final Spec.ArticleNumber highestArticleNumber;
+            private final Specification.ArticleNumber lowestArticleNumber;
+            private final Specification.ArticleNumber highestArticleNumber;
 
-            private NewsgroupMetrics(int numberOfArticles, Spec.ArticleNumber lowestArticleNumber, Spec.ArticleNumber highestArticleNumber) {
+            private NewsgroupMetrics(int numberOfArticles, Specification.ArticleNumber lowestArticleNumber, Specification.ArticleNumber highestArticleNumber) {
                 this.numberOfArticles = numberOfArticles;
                 this.lowestArticleNumber = lowestArticleNumber;
                 this.highestArticleNumber = highestArticleNumber;
@@ -811,12 +811,12 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
             }
 
             @Override
-            public Spec.ArticleNumber getLowestArticleNumber() {
+            public Specification.ArticleNumber getLowestArticleNumber() {
                 return lowestArticleNumber;
             }
 
             @Override
-            public Spec.ArticleNumber getHighestArticleNumber() {
+            public Specification.ArticleNumber getHighestArticleNumber() {
                 return highestArticleNumber;
             }
         }
@@ -905,7 +905,7 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
         }
 
         @Override
-        public NewsgroupArticle addArticle(Spec.MessageId messageId, Spec.Article.ArticleHeaders headers, Reader body, boolean isRejected) {
+        public NewsgroupArticle addArticle(Specification.MessageId messageId, Specification.Article.ArticleHeaders headers, Reader body, boolean isRejected) {
 
             try (PreparedStatement insertArticle = dbConnection.prepareStatement(
                     "INSERT INTO NN_ARTICLES (insertionTime, messageID, message, rejected) VALUES (?,?,?,?)",
@@ -980,10 +980,10 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
                 }
 
                 // enough data to form the article record
-                Spec.Article article = new ArticleRecord(dbConnection, articlePK, messageId.toString());
+                Specification.Article article = new ArticleRecord(dbConnection, articlePK, messageId.toString());
 
                 // include the article in this newsgroup
-                Spec.ArticleNumber articleNumber = registerArticle(messageId, this);
+                Specification.ArticleNumber articleNumber = registerArticle(messageId, this);
 
                 // save all the changes
                 dbConnection.commit();
@@ -1000,14 +1000,14 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
                 } catch (SQLException _) {
                 }
                 throw new RuntimeException(e);
-            } catch (IOException | Spec.MessageId.InvalidMessageIdException e) {
+            } catch (IOException | Specification.MessageId.InvalidMessageIdException e) {
                 logger.error(e.getMessage(), e);
                 throw new RuntimeException(e);
             }
         }
 
         @Override
-        public Spec.ArticleNumber includeArticle(NewsgroupArticle article) {
+        public Specification.ArticleNumber includeArticle(NewsgroupArticle article) {
             return registerArticle(article.getMessageId(), article.getNewsgroup());
         }
 
@@ -1019,7 +1019,7 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
          * @param newsgroup
          * @return
          */
-        private Spec.ArticleNumber registerArticle(Spec.MessageId messageId, PersistenceService.Newsgroup newsgroup) {
+        private Specification.ArticleNumber registerArticle(Specification.MessageId messageId, PersistenceService.Newsgroup newsgroup) {
             try (
                 PreparedStatement incrementArticleNumber = dbConnection.prepareStatement(
                     "INSERT INTO NN_NEWSGROUP_ARTICLES (newsgroupPK, articlePK, articleNum) " +
@@ -1044,18 +1044,18 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
                     if (rs.wasNull()) {
                         throw new RuntimeException("Failed to locate article in database: " + messageId);
                     } else {
-                        return new Spec.ArticleNumber(articleNumber);
+                        return new Specification.ArticleNumber(articleNumber);
                     }
                 }
 
-            } catch (SQLException | Spec.ArticleNumber.InvalidArticleNumberException e) {
+            } catch (SQLException | Specification.ArticleNumber.InvalidArticleNumberException e) {
                 logger.error(e.getMessage(), e);
                 throw new RuntimeException(e);
             }
         }
 
         @Override
-        public Spec.ArticleNumber getArticle(Spec.MessageId messageId) {
+        public Specification.ArticleNumber getArticle(Specification.MessageId messageId) {
             try (PreparedStatement ps = dbConnection.prepareStatement(
                     "SELECT articleNum FROM NN_NEWSGROUP_ARTICLES, NN_ARTICLES WHERE newsgroupPK = ? AND messageID = ? and articlePK = PK limit 1")) {
                 ps.setInt(1, pk);
@@ -1063,17 +1063,17 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
                 ResultSet rs = ps.executeQuery();
                 if (rs.next()) {
                     // change the current article number to the one we just found
-                    return currentArticleNumber = new Spec.ArticleNumber(rs.getInt("articleNum"));
+                    return currentArticleNumber = new Specification.ArticleNumber(rs.getInt("articleNum"));
                 }
                 return null;
-            } catch (SQLException | Spec.ArticleNumber.InvalidArticleNumberException e) {
+            } catch (SQLException | Specification.ArticleNumber.InvalidArticleNumberException e) {
                 logger.error(e.getMessage(), e);
                 throw new RuntimeException(e);
             }
         }
 
         @Override
-        public NewsgroupArticle getArticleNumbered(Spec.ArticleNumber articleNumber) {
+        public NewsgroupArticle getArticleNumbered(Specification.ArticleNumber articleNumber) {
             try (PreparedStatement ps = dbConnection.prepareStatement(
                     "SELECT articlePK, messageID  FROM NN_NEWSGROUP_ARTICLES, NN_ARTICLES WHERE newsgroupPK = ? AND articleNum = ? and articlePK = PK limit 1")) {
                 ps.setInt(1, pk);
@@ -1086,14 +1086,14 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
                     return new NewsgroupArticleRecord(article, articleNumber, this);
                 }
                 return null;    // no such article exists.
-            } catch (SQLException | Spec.MessageId.InvalidMessageIdException e) {
+            } catch (SQLException | Specification.MessageId.InvalidMessageIdException e) {
                 logger.error(e.getMessage(), e);
                 throw new RuntimeException(e);
             }
         }
 
         @Override
-        public Iterator<NewsgroupArticle> getArticlesNumbered(Spec.ArticleNumber lowerBound, Spec.ArticleNumber upperBound) {
+        public Iterator<NewsgroupArticle> getArticlesNumbered(Specification.ArticleNumber lowerBound, Specification.ArticleNumber upperBound) {
             try {
                 PreparedStatement ps = dbConnection.prepareStatement(
                         "SELECT NN_ARTICLES.pk, messageID, articleNum  FROM NN_ARTICLES, NN_NEWSGROUP_ARTICLES, NN_NEWSGROUPS " +
@@ -1111,10 +1111,10 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
                                 new ArticleRecord(dbConnection,
                                         resultSet.getInt("pk"),
                                         resultSet.getString("messageID")),
-                                new Spec.ArticleNumber(resultSet.getInt("articleNum")),
+                                new Specification.ArticleNumber(resultSet.getInt("articleNum")),
                                 NewsgroupRecord.this);
-                    } catch (Spec.ArticleNumber.InvalidArticleNumberException |
-                             Spec.MessageId.InvalidMessageIdException |
+                    } catch (Specification.ArticleNumber.InvalidArticleNumberException |
+                             Specification.MessageId.InvalidMessageIdException |
                              SQLException e) {
                         logger.error(e.getMessage(), e);
                         throw new RuntimeException(e);
@@ -1145,11 +1145,11 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
                                 new ArticleRecord(dbConnection,
                                         resultSet.getInt("pk"),
                                         resultSet.getString("messageID")),
-                                        new Spec.ArticleNumber(
+                                        new Specification.ArticleNumber(
                                             resultSet.getInt("articleNum")),
                                 NewsgroupRecord.this);
-                    } catch (Spec.ArticleNumber.InvalidArticleNumberException |
-                             Spec.MessageId.InvalidMessageIdException |
+                    } catch (Specification.ArticleNumber.InvalidArticleNumberException |
+                             Specification.MessageId.InvalidMessageIdException |
                              SQLException e) {
                         logger.error(e.getMessage(), e);
                         throw new RuntimeException(e);
@@ -1178,11 +1178,11 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
                     if (rs.next()) {
                         int n = rs.getInt(1);
                         if (!rs.wasNull()) {
-                            currentArticleNumber = new Spec.ArticleNumber(rs.getInt(1)); // only move the currentArticleNumber if there is a next article.
+                            currentArticleNumber = new Specification.ArticleNumber(rs.getInt(1)); // only move the currentArticleNumber if there is a next article.
                             return getArticleNumbered(currentArticleNumber);
                         }
                     }
-                } catch (SQLException | Spec.ArticleNumber.InvalidArticleNumberException e) {
+                } catch (SQLException | Specification.ArticleNumber.InvalidArticleNumberException e) {
                     logger.error(e.getMessage(), e);
                     throw new RuntimeException(e);
                 }
@@ -1201,11 +1201,11 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
                     if (rs.next()) {
                         int n = rs.getInt(1);
                         if (!rs.wasNull()) {
-                            currentArticleNumber = new Spec.ArticleNumber(n); // only move the currentArticleNumber if there is a previous article.
+                            currentArticleNumber = new Specification.ArticleNumber(n); // only move the currentArticleNumber if there is a previous article.
                             return getArticleNumbered(currentArticleNumber);
                         }
                     }
-                } catch (SQLException | Spec.ArticleNumber.InvalidArticleNumberException e) {
+                } catch (SQLException | Specification.ArticleNumber.InvalidArticleNumberException e) {
                     logger.error(e.getMessage(), e);
                     throw new RuntimeException(e);
                 }
@@ -1214,7 +1214,7 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
         }
 
         @Override
-        public NewsgroupArticle gotoArticleWithNumber(Spec.ArticleNumber articleNumber) {
+        public NewsgroupArticle gotoArticleWithNumber(Specification.ArticleNumber articleNumber) {
             if (currentArticleNumber != null) {
                 try (PreparedStatement ps = dbConnection.prepareStatement(
                         "SELECT COUNT(*) FROM NN_NEWSGROUP_ARTICLES WHERE newsgroupPK = ? AND articleNum = ? LIMIT 1")) {
@@ -1238,23 +1238,23 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
 
     public static class NewsgroupArticleRecord implements NewsgroupArticle {
         private final ArticleRecord article;
-        private final Spec.ArticleNumber articleNumber;
+        private final Specification.ArticleNumber articleNumber;
         private final Newsgroup newsgroup;
 
 
-        NewsgroupArticleRecord(ArticleRecord article, Spec.ArticleNumber articleNumber, Newsgroup newsgroup) {
+        NewsgroupArticleRecord(ArticleRecord article, Specification.ArticleNumber articleNumber, Newsgroup newsgroup) {
             this.article = article;
             this.articleNumber = articleNumber;
             this.newsgroup = newsgroup;
         }
 
         @Override
-        public Spec.ArticleNumber getArticleNumber() {
+        public Specification.ArticleNumber getArticleNumber() {
             return articleNumber;
         }
 
         @Override
-        public Spec.MessageId getMessageId() {
+        public Specification.MessageId getMessageId() {
             return article.getMessageId();
         }
 
@@ -1296,7 +1296,7 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
         }
 
         @Override
-        public Spec.ArticleNumber getLastSyncArticleNum() {
+        public Specification.ArticleNumber getLastSyncArticleNum() {
             try (PreparedStatement ps = dbConnection.prepareStatement(
                     "SELECT lastSyncArticleNum FROM NN_NEWSFEEDS WHERE pk = ?")) {
                 ps.setInt(1, pk);
@@ -1304,10 +1304,10 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
                 if (rs.next()) {
                     int articleNum = rs.getInt(1);
                     if (!rs.wasNull()) {
-                        return new Spec.ArticleNumber(articleNum);
+                        return new Specification.ArticleNumber(articleNum);
                     }
                 }
-            } catch (SQLException | Spec.ArticleNumber.InvalidArticleNumberException e) {
+            } catch (SQLException | Specification.ArticleNumber.InvalidArticleNumberException e) {
                 logger.error(e.getMessage(), e);
                 throw new RuntimeException(e);
             }
@@ -1350,7 +1350,7 @@ public class MockPersistenceService implements PersistenceService, AutoCloseable
         }
 
         @Override
-        public void setLastSyncArticleNum(Spec.ArticleNumber num) {
+        public void setLastSyncArticleNum(Specification.ArticleNumber num) {
             try (PreparedStatement ps = dbConnection.prepareStatement(
                     "UPDATE NN_NEWSFEEDS SET lastSyncArticleNum = ? WHERE pk = ?")) {
 

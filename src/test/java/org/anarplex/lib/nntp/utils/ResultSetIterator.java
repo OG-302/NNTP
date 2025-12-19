@@ -61,12 +61,12 @@ public class ResultSetIterator<T> implements Iterator<T>, AutoCloseable {
     @Override
     public void close() {
         try {
-            // resultSet.close();
+            // resultSet.terminate();
             if (resultSet.getStatement() != null) {
                 resultSet.getStatement().close();
             }
         } catch (SQLException e) {
-            throw new RuntimeException("Failed to close ResultSet", e);
+            throw new RuntimeException("Failed to terminate ResultSet", e);
         }
     }
 

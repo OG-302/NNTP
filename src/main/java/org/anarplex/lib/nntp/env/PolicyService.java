@@ -1,6 +1,6 @@
-package org.anarplex.lib.nntp.ext;
+package org.anarplex.lib.nntp.env;
 
-import org.anarplex.lib.nntp.Spec;
+import org.anarplex.lib.nntp.Specification;
 
 import javax.security.auth.Subject;
 import java.io.StringReader;
@@ -34,7 +34,10 @@ public interface PolicyService extends AutoCloseable {
     boolean isIHaveTransferAllowed(Subject submitter);
 
     /**
-     * isNewsgroupAllowed determines whether the specified newsgroup is to be allowed, false if not.
+     * isNewsgroupAllowed indicates whether the specified newsgroup is allowed or not.  If the newsgroup is allowed,
+     * then articles found posted to this newsgroup on other Peers will be fetched.  If not allowed, then such articles
+     * will be ignored.  In either case, a record of this newsgroup will be created in the database so that later
+     * encounters of this newsgroup will follow the same policy.
      *
      * @param newsgroup
      * @param postingMode
@@ -42,7 +45,7 @@ public interface PolicyService extends AutoCloseable {
      * @param advertisingPeer the subject of the advertising peer
      * @return true if the newsgroup is allowed, false otherwise
      */
-    boolean isNewsgroupAllowed(Spec.NewsgroupName newsgroup, Spec.PostingMode postingMode, int estNumArticles, Subject advertisingPeer);
+    boolean isNewsgroupAllowed(Specification.NewsgroupName newsgroup, Specification.PostingMode postingMode, int estNumArticles, Subject advertisingPeer);
 
     /**
      * isArticleAllowed determines whether the specified article which is being obtained from the specified submitter
@@ -56,6 +59,6 @@ public interface PolicyService extends AutoCloseable {
      * @param submitter
      * @return true if the article is allowed, false otherwise
      */
-    boolean isArticleAllowed(Spec.MessageId messageId, Map<String, Set<String>> headerMap, StringReader bodyReader, Spec.NewsgroupName destination, Spec.PostingMode postingMode, Subject submitter);
+    boolean isArticleAllowed(Specification.MessageId messageId, Map<String, Set<String>> headerMap, StringReader bodyReader, Specification.NewsgroupName destination, Specification.PostingMode postingMode, Subject submitter);
 
 }

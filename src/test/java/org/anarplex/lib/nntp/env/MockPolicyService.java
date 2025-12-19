@@ -1,6 +1,6 @@
-package org.anarplex.lib.nntp.ext;
+package org.anarplex.lib.nntp.env;
 
-import org.anarplex.lib.nntp.Spec;
+import org.anarplex.lib.nntp.Specification;
 
 import javax.security.auth.Subject;
 import java.io.StringReader;
@@ -30,12 +30,12 @@ public class MockPolicyService implements PolicyService {
     }
 
     @Override
-    public boolean isNewsgroupAllowed(Spec.NewsgroupName newsgroup, Spec.PostingMode postingMode, int estNumArticles, Subject advertisingPeer) {
+    public boolean isNewsgroupAllowed(Specification.NewsgroupName newsgroup, Specification.PostingMode postingMode, int estNumArticles, Subject advertisingPeer) {
         return true;
     }
 
     @Override
-    public boolean isArticleAllowed(Spec.MessageId messageId, Map<String, Set<String>> headerMap, StringReader bodyReader, Spec.NewsgroupName destination, Spec.PostingMode postingMode, Subject submitter) {
+    public boolean isArticleAllowed(Specification.MessageId messageId, Map<String, Set<String>> headerMap, StringReader bodyReader, Specification.NewsgroupName destination, Specification.PostingMode postingMode, Subject submitter) {
         return true;
     }
 }

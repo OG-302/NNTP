@@ -1,7 +1,7 @@
-package org.anarplex.lib.nntp.ext;
+package org.anarplex.lib.nntp.env;
 
 import org.anarplex.lib.nntp.utils.RandomNumber;
-import org.anarplex.lib.nntp.Spec;
+import org.anarplex.lib.nntp.Specification;
 import org.apache.logging.log4j.core.util.IOUtils;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -16,29 +16,29 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.*;
 
-import static org.anarplex.lib.nntp.Spec.NNTP_Standard_Article_Headers;
+import static org.anarplex.lib.nntp.Specification.NNTP_Standard_Article_Headers;
 import static org.junit.jupiter.api.Assertions.*;
 
 class MockPersistenceServiceTest {
 
     // For testing purposes
-    static final Spec.MessageId nonExistentMessageId;  // should not exist in database
+    static final Specification.MessageId nonExistentMessageId;  // should not exist in database
 
     static {
         try {
-            nonExistentMessageId = new Spec.MessageId("<.>");
-        } catch (Spec.MessageId.InvalidMessageIdException e) {
+            nonExistentMessageId = new Specification.MessageId("<.>");
+        } catch (Specification.MessageId.InvalidMessageIdException e) {
             throw new RuntimeException(e);
         }
     }
 
-    static final Spec.MessageId[] validMessageId = new Spec.MessageId[3];
-    static final Spec.NewsgroupName[] validGroupName = new Spec.NewsgroupName[3];
+    static final Specification.MessageId[] validMessageId = new Specification.MessageId[3];
+    static final Specification.NewsgroupName[] validGroupName = new Specification.NewsgroupName[3];
     static final Date startTime = new Date();
     static MockPersistenceService persistenceService;
 
     @BeforeAll
-    static void initialiseDatabase() throws Spec.MessageId.InvalidMessageIdException, Spec.NewsgroupName.InvalidNewsgroupNameException {
+    static void initialiseDatabase() throws Specification.MessageId.InvalidMessageIdException, Specification.NewsgroupName.InvalidNewsgroupNameException {
         assertNotNull(nonExistentMessageId);
 
         if (persistenceService == null) {
@@ -48,12 +48,12 @@ class MockPersistenceServiceTest {
 
             // load database with known values
             for (int i = 0; i < validMessageId.length; i++) {
-                validMessageId[i] = new Spec.MessageId("<"+ RandomNumber.generate10DigitNumber()+">");
+                validMessageId[i] = new Specification.MessageId("<"+ RandomNumber.generate10DigitNumber()+">");
             }
 
             String groupName = "local.tmp.test.nntp-lib.g" + RandomNumber.generate10DigitNumber();
             for (int i = 0; i < validGroupName.length; i++) {
-                validGroupName[i] = new Spec.NewsgroupName(groupName + i);
+                validGroupName[i] = new Specification.NewsgroupName(groupName + i);
             }
 
             // create some known articles
@@ -149,12 +149,12 @@ class MockPersistenceServiceTest {
     }
 
     @Test
-    void addArticle() throws Spec.MessageId.InvalidMessageIdException, Spec.Article.ArticleHeaders.InvalidArticleHeaderException, PersistenceService.Newsgroup.ExistingArticleException {
+    void addArticle() throws Specification.MessageId.InvalidMessageIdException, Specification.Article.ArticleHeaders.InvalidArticleHeaderException, PersistenceService.Newsgroup.ExistingArticleException {
         PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[1]);
         assertNotNull(newsgroup);
         
         // Create a unique message ID for this test
-        Spec.MessageId newMessageId = new Spec.MessageId("<" + RandomNumber.generate10DigitNumber() + "@test.article>");
+        Specification.MessageId newMessageId = new Specification.MessageId("<" + RandomNumber.generate10DigitNumber() + "@test.article>");
         assertNotNull(newMessageId);
 
         // Create required headers for the article
@@ -170,7 +170,7 @@ class MockPersistenceServiceTest {
         headers.put(NNTP_Standard_Article_Headers.Bytes.getValue(), Collections.singleton("42"));
         
         // Create article headers
-        Spec.Article.ArticleHeaders articleHeaders = new Spec.Article.ArticleHeaders(headers);
+        Specification.Article.ArticleHeaders articleHeaders = new Specification.Article.ArticleHeaders(headers);
         assertNotNull(articleHeaders);
         
         // Create article body
@@ -197,7 +197,7 @@ class MockPersistenceServiceTest {
         assertEquals(newMessageId, retrievedArticle.getMessageId());
         
         // Verify headers were persisted correctly
-        Spec.Article.ArticleHeaders retrievedHeaders = retrievedArticle.getAllHeaders();
+        Specification.Article.ArticleHeaders retrievedHeaders = retrievedArticle.getAllHeaders();
         assertNotNull(retrievedHeaders);
         
         Set<String> subjectHeader = retrievedHeaders.getHeaderValue(NNTP_Standard_Article_Headers.Subject.getValue());
@@ -257,22 +257,22 @@ class MockPersistenceServiceTest {
     }
 
     @Test
-    void addGroup() throws Spec.NewsgroupName.InvalidNewsgroupNameException, PersistenceService.ExistingNewsgroupException {
+    void addGroup() throws Specification.NewsgroupName.InvalidNewsgroupNameException, PersistenceService.ExistingNewsgroupException {
         final String groupNameTestSuffix = "_addGroupTest";
 
         // add groups, one for each group Permission type
         for (int i = 0; i < validGroupName.length; i++) {
-            Spec.NewsgroupName n;
+            Specification.NewsgroupName n;
             PersistenceService.Newsgroup newsgroup = persistenceService.addGroup(
-                    n = new Spec.NewsgroupName( validGroupName[i].getValue() + groupNameTestSuffix),
+                    n = new Specification.NewsgroupName( validGroupName[i].getValue() + groupNameTestSuffix),
                     "test group number " + i + " for this test exercise",
-                    Spec.PostingMode.values()[i % Spec.PostingMode.values().length],
+                    Specification.PostingMode.values()[i % Specification.PostingMode.values().length],
                     new Date(),
                     "test user",
                     false);
             assertNotNull(newsgroup);
             assertEquals(n.getValue(), newsgroup.getName().getValue());
-            assertEquals(Spec.PostingMode.values()[i % Spec.PostingMode.values().length], newsgroup.getPostingMode());
+            assertEquals(Specification.PostingMode.values()[i % Specification.PostingMode.values().length], newsgroup.getPostingMode());
         }
     }
 
@@ -397,18 +397,18 @@ class MockPersistenceServiceTest {
         PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[1]);
         assertNotNull(newsgroup);
 
-        Spec.ArticleNumber n = newsgroup.getArticle(validMessageId[1]);
+        Specification.ArticleNumber n = newsgroup.getArticle(validMessageId[1]);
         assertNotNull(n);
         assertEquals(2, n.getValue());
     }
 
     @Test
-    void getArticleNumbered() throws Spec.ArticleNumber.InvalidArticleNumberException {
+    void getArticleNumbered() throws Specification.ArticleNumber.InvalidArticleNumberException {
         PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[1]);
         assertNotNull(newsgroup);
 
         // jump to middle of group
-        PersistenceService.NewsgroupArticle n = newsgroup.getArticleNumbered(new Spec.ArticleNumber(2));
+        PersistenceService.NewsgroupArticle n = newsgroup.getArticleNumbered(new Specification.ArticleNumber(2));
         assertNotNull(n);
         assertEquals(validMessageId[1], n.getMessageId());
         assertEquals(2, n.getArticleNumber().getValue());
@@ -506,13 +506,13 @@ class MockPersistenceServiceTest {
         PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[1]);
         assertNotNull(newsgroup);
 
-        for (Spec.PostingMode mode : Spec.PostingMode.values()) {
+        for (Specification.PostingMode mode : Specification.PostingMode.values()) {
             newsgroup.setPostingMode(mode);
             assertEquals(mode, newsgroup.getPostingMode());
         }
 
         // leave it's mode as Allowed
-        newsgroup.setPostingMode(Spec.PostingMode.Allowed);
+        newsgroup.setPostingMode(Specification.PostingMode.Allowed);
     }
 
     @Test
@@ -521,10 +521,10 @@ class MockPersistenceServiceTest {
         Map<String, Set<String>> headers = new HashMap<String, Set<String>>();
         long rn = RandomNumber.generate10DigitNumber();
         String testHeaderName = "testHeader-" + rn;
-        Spec.MessageId mId = null;
+        Specification.MessageId mId = null;
         try {
-            mId = new Spec.MessageId("<" + RandomNumber.generate10DigitNumber() + ">");
-        } catch (Spec.MessageId.InvalidMessageIdException e) {
+            mId = new Specification.MessageId("<" + RandomNumber.generate10DigitNumber() + ">");
+        } catch (Specification.MessageId.InvalidMessageIdException e) {
             assertNull(e, "Invalid message ID exception should not be thrown");
         }
         assertNotNull(mId);
@@ -534,10 +534,10 @@ class MockPersistenceServiceTest {
         headers.put(NNTP_Standard_Article_Headers.Newsgroups.getValue(), Collections.singleton(testGroupString1+","+testGroupString2));
         headers.put(NNTP_Standard_Article_Headers.MessageID.getValue(), Collections.singleton(mId.getValue()));
 
-        Spec.Article.ArticleHeaders articleHeaders = null;
+        Specification.Article.ArticleHeaders articleHeaders = null;
         try {
-            articleHeaders = new Spec.Article.ArticleHeaders(headers);
-        } catch (Spec.Article.ArticleHeaders.InvalidArticleHeaderException e) {
+            articleHeaders = new Specification.Article.ArticleHeaders(headers);
+        } catch (Specification.Article.ArticleHeaders.InvalidArticleHeaderException e) {
             // invalid header should happen here because the header was missing a few standard entries
             assertNotNull(e, "Invalid article header exception should be thrown");
         }
@@ -552,8 +552,8 @@ class MockPersistenceServiceTest {
         headers.put(NNTP_Standard_Article_Headers.Path.getValue(), Collections.singleton("path.to.article"));
 
         try {
-            articleHeaders = new Spec.Article.ArticleHeaders(headers);
-        } catch (Spec.Article.ArticleHeaders.InvalidArticleHeaderException e) {
+            articleHeaders = new Specification.Article.ArticleHeaders(headers);
+        } catch (Specification.Article.ArticleHeaders.InvalidArticleHeaderException e) {
             assertNull(e, "Invalid article header exception should not be thrown");
         }
         assertNotNull(articleHeaders);  // all standard headers have been defined now
@@ -561,8 +561,8 @@ class MockPersistenceServiceTest {
         // add a few more custom headers
         headers.put(testHeaderName, new HashSet<String>(Arrays.asList("<th1>;<th2>", "<th3>", "<th4>")));
         try {
-            articleHeaders = new Spec.Article.ArticleHeaders(headers);
-        } catch (Spec.Article.ArticleHeaders.InvalidArticleHeaderException e) {
+            articleHeaders = new Specification.Article.ArticleHeaders(headers);
+        } catch (Specification.Article.ArticleHeaders.InvalidArticleHeaderException e) {
             assertNull(e, "Invalid article header exception should not be thrown");
         }
         assertNotNull(articleHeaders);

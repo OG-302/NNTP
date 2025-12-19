@@ -1,6 +1,6 @@
-package org.anarplex.lib.nntp.ext;
+package org.anarplex.lib.nntp.env;
 
-import org.anarplex.lib.nntp.Spec;
+import org.anarplex.lib.nntp.Specification;
 
 import java.util.Map;
 import java.util.Set;
@@ -47,5 +47,5 @@ public interface IdentityService extends AutoCloseable {
      * @param articleHeaders
      * @return a Message-ID conforming to RFC-5536 Section 3.1.3
      */
-    Spec.MessageId createMessageID(Map<String, Set<String>> articleHeaders);
+    Specification.MessageId createMessageID(Map<String, Set<String>> articleHeaders);
 }

@@ -1,7 +1,7 @@
-package org.anarplex.lib.nntp.ext;
+package org.anarplex.lib.nntp.env;
 
 import org.anarplex.lib.nntp.utils.RandomNumber;
-import org.anarplex.lib.nntp.Spec;
+import org.anarplex.lib.nntp.Specification;
 
 import java.net.InetAddress;
 import java.security.MessageDigest;
@@ -28,11 +28,11 @@ public class MockIdentityService implements IdentityService {
     }
 
     @Override
-    public Spec.MessageId createMessageID(Map<String, Set<String>> articleHeaders) {
+    public Specification.MessageId createMessageID(Map<String, Set<String>> articleHeaders) {
         try {
             long rn = RandomNumber.generate10DigitNumber();
-            return new Spec.MessageId( '<'+String.valueOf(rn)+'>' ) ;
-        } catch (Spec.MessageId.InvalidMessageIdException e) {
+            return new Specification.MessageId( '<'+String.valueOf(rn)+'>' ) ;
+        } catch (Specification.MessageId.InvalidMessageIdException e) {
             throw new RuntimeException(e);
         }
     }

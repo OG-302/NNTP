@@ -1,6 +1,7 @@
-package org.anarplex.lib.nntp.ext;
+package org.anarplex.lib.nntp.env;
 
-import org.anarplex.lib.nntp.Spec;
+import org.anarplex.lib.nntp.PeerSynchronization;
+import org.anarplex.lib.nntp.Specification;
 
 import java.io.Reader;
 import java.util.Date;
@@ -11,7 +12,7 @@ import java.util.Iterator;
  * designed to be abstract enough to support multiple storage backends.
  * Each PersistentService **instance** will be used by one NNTP client and will be invoked by the same thread during
  * its lifetime.
- * Init() will be called at the start of the lifecycle and close() at the end.
+ * Init() will be called at the start of the lifecycle and terminate() at the end.
  */
 public interface PersistenceService extends AutoCloseable {
 
@@ -29,7 +30,7 @@ public interface PersistenceService extends AutoCloseable {
      * @param messageId
      * @return true if the message id exists, false otherwise
      */
-    boolean hasArticle(Spec.MessageId messageId);
+    boolean hasArticle(Specification.MessageId messageId);
 
     /**
      * getArticle returns the article with the specified message id or null if it does not exist.
@@ -37,7 +38,7 @@ public interface PersistenceService extends AutoCloseable {
      * @param messageId
      * @return the article with the specified message id or null if it does not exist
      */
-    Article getArticle(Spec.MessageId messageId);
+    Article getArticle(Specification.MessageId messageId);
 
     /**
      * getArticleIdsAfter returns an iterator over all message ids that were added after the specified time.
@@ -45,14 +46,14 @@ public interface PersistenceService extends AutoCloseable {
      * @param after
      * @return an iterator over all message ids that were added after the specified time
      */
-    Iterator<Spec.MessageId> getArticleIdsAfter(Date after);
+    Iterator<Specification.MessageId> getArticleIdsAfter(Date after);
 
     /**
      * rejectArticle marks the specified message id as rejected.
      *
      * @param messageId
      */
-    void rejectArticle(Spec.MessageId messageId);
+    void rejectArticle(Specification.MessageId messageId);
 
     /**
      * isRejectedArticle returns true if the specified message id has been marked as rejected.
@@ -60,7 +61,7 @@ public interface PersistenceService extends AutoCloseable {
      * @param messageId
      * @return true if the specified message id has been marked as rejected, false otherwise
      */
-    Boolean isRejectedArticle(Spec.MessageId messageId);
+    Boolean isRejectedArticle(Specification.MessageId messageId);
 
     /**
      * addGroup adds a new newsgroup to the database.
@@ -73,14 +74,14 @@ public interface PersistenceService extends AutoCloseable {
      * @param toBeIgnored
      * @return the newly created Newsgroup or null if the newsgroup already exists
      */
-    Newsgroup addGroup(Spec.NewsgroupName name, String description, Spec.PostingMode postingMode, Date createdAt, String createdBy, boolean toBeIgnored)
+    Newsgroup addGroup(Specification.NewsgroupName name, String description, Specification.PostingMode postingMode, Date createdAt, String createdBy, boolean toBeIgnored)
         throws ExistingNewsgroupException;
 
     Iterator<Newsgroup> listAllGroups(boolean subscribedOnly, boolean includeIgnored);
 
     Iterator<Newsgroup> listAllGroupsAddedSince(Date insertedTime);
 
-    Newsgroup getGroupByName(Spec.NewsgroupName name);
+    Newsgroup getGroupByName(Specification.NewsgroupName name);
 
     /**
      * addPeer adds a new Peer to the database.
@@ -126,8 +127,8 @@ public interface PersistenceService extends AutoCloseable {
          * a standard header (messageId) which may be different (See RFC-3977)
          * @return
          */
-        Spec.MessageId getMessageId();
-        Spec.Article.ArticleHeaders getAllHeaders();
+        Specification.MessageId getMessageId();
+        Specification.Article.ArticleHeaders getAllHeaders();
         Reader getBody();
     }
 
@@ -143,10 +144,10 @@ public interface PersistenceService extends AutoCloseable {
          *
          * @return
          */
-        Spec.NewsgroupName getName();
+        Specification.NewsgroupName getName();
         String getDescription();
-        Spec.PostingMode getPostingMode();
-        void setPostingMode(Spec.PostingMode postingMode);
+        Specification.PostingMode getPostingMode();
+        void setPostingMode(Specification.PostingMode postingMode);
         Date  getCreatedAt();
         String getCreatedBy();
 
@@ -179,7 +180,7 @@ public interface PersistenceService extends AutoCloseable {
          * @return
          * @throws ExistingArticleException if an article with the same message-id already exists in this Newsgroup
          */
-        NewsgroupArticle addArticle(Spec.MessageId messageId, Spec.Article.ArticleHeaders headers, Reader body, boolean isRejected)
+        NewsgroupArticle addArticle(Specification.MessageId messageId, Specification.Article.ArticleHeaders headers, Reader body, boolean isRejected)
             throws ExistingArticleException;
 
         class ExistingArticleException extends Exception {
@@ -193,7 +194,7 @@ public interface PersistenceService extends AutoCloseable {
          * @param article
          * @return
          */
-        Spec.ArticleNumber includeArticle(NewsgroupArticle article)
+        Specification.ArticleNumber includeArticle(NewsgroupArticle article)
             throws ExistingArticleException;
 
         /**
@@ -202,7 +203,7 @@ public interface PersistenceService extends AutoCloseable {
          * @param messageId
          * @return
          */
-        Spec.ArticleNumber getArticle(Spec.MessageId messageId);
+        Specification.ArticleNumber getArticle(Specification.MessageId messageId);
 
         /**
          * GetArticleNumbered returns the Article with the specified articleNumber or nil if no such ArticleNumber exists.
@@ -211,7 +212,7 @@ public interface PersistenceService extends AutoCloseable {
          * @param articleNumber
          * @return the NewsgroupArticle with the specified ArticleNumber or null if no such ArticleNumber exists
          */
-        NewsgroupArticle getArticleNumbered(Spec.ArticleNumber articleNumber);
+        NewsgroupArticle getArticleNumbered(Specification.ArticleNumber articleNumber);
 
         /**
          * GetArticlesNumbered returns a list of Articles (in order) of their ArticleNumbers within the specified bounds
@@ -221,7 +222,7 @@ public interface PersistenceService extends AutoCloseable {
          * @param upperBound
          * @return
          */
-        Iterator<NewsgroupArticle> getArticlesNumbered(Spec.ArticleNumber lowerBound, Spec.ArticleNumber upperBound);
+        Iterator<NewsgroupArticle> getArticlesNumbered(Specification.ArticleNumber lowerBound, Specification.ArticleNumber upperBound);
 
         /**
          * GetArticlesSince returns a list of MessageIDs of Articles added to this Newsgroup since the specified
@@ -277,15 +278,15 @@ public interface PersistenceService extends AutoCloseable {
          * @param articleNumber
          * @return the NewsgroupArticle with the specified ArticleNumber or nil if no such ArticleNumber exists
          */
-        NewsgroupArticle gotoArticleWithNumber(Spec.ArticleNumber articleNumber);
+        NewsgroupArticle gotoArticleWithNumber(Specification.ArticleNumber articleNumber);
     }
 
     /**
      * NewsgroupArticle is a structure that contains an Article and its ArticleNumber in a particular Newsgroup.
      */
     interface NewsgroupArticle {
-        Spec.ArticleNumber getArticleNumber();
-        Spec.MessageId getMessageId();
+        Specification.ArticleNumber getArticleNumber();
+        Specification.MessageId getMessageId();
         Article getArticle();
         Newsgroup getNewsgroup();
     }
@@ -299,18 +300,18 @@ public interface PersistenceService extends AutoCloseable {
      */
     interface NewsgroupMetrics {
         int getNumberOfArticles();
-        Spec.ArticleNumber getLowestArticleNumber();
-        Spec.ArticleNumber getHighestArticleNumber();
+        Specification.ArticleNumber getLowestArticleNumber();
+        Specification.ArticleNumber getHighestArticleNumber();
     }
 
 
-    interface Feed  {
+    interface Feed {
         // GetLastSyncArticleNum returns the value set by UpdateLastSyncArticleNum() or nil if none, err if error.
-        Spec.ArticleNumber getLastSyncArticleNum();
+        Specification.ArticleNumber getLastSyncArticleNum();
         Date getLastSyncTime();
 
         void setLastSyncTime(Date time);
-        void setLastSyncArticleNum(Spec.ArticleNumber num);
+        void setLastSyncArticleNum(Specification.ArticleNumber num);
 
         Peer GetPeer();
     }

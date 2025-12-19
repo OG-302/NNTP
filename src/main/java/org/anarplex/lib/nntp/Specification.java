@@ -5,9 +5,9 @@ import org.apache.commons.lang3.StringUtils;
 import java.io.Reader;
 import java.util.*;
 
-public class Spec {
+public class Specification {
 
-    private Spec() {
+    private Specification() {
         super();
     }
 
