@@ -1,6 +1,5 @@
 package org.anarplex.lib.nntp.env;
 
-import org.anarplex.lib.nntp.PeerSynchronization;
 import org.anarplex.lib.nntp.Specification;
 
 import java.io.Reader;

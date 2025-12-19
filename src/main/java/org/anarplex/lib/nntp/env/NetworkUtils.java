@@ -1,7 +1,5 @@
 package org.anarplex.lib.nntp.env;
 
-import org.anarplex.lib.nntp.ProtocolEngine;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
