@@ -30,14 +30,12 @@ public class MockNetworkUtils implements NetworkUtils {
     @Override
     public ProtocolStreams connectToPeer(PersistenceService.Peer peer, Properties p) throws IOException {
         return new ProtocolStreams() {
-            Socket connection;
-            void ProtocolStreams() {
-                try {
-                    connection = new Socket(p.getProperty("host"), Integer.parseInt(p.getProperty("port")));
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
+            final Socket connection;
+            {
+              connection = new Socket(p.getProperty("host"), Integer.parseInt(p.getProperty("port")));
+              System.out.println("Connected to " + p.getProperty("host") + ":" + p.getProperty("port"));
             }
+
             @Override
             public InputStream getInputStream() {
                 try {
@@ -66,7 +64,7 @@ public class MockNetworkUtils implements NetworkUtils {
     }
 
 
-    private static class ServiceManager implements NetworkUtils.ServiceManager {
+    private static class ServiceManager implements NetworkUtils.ServiceManager, Runnable {
         private ConnectionListener listener;
         private final Properties p;
 
@@ -77,6 +75,12 @@ public class MockNetworkUtils implements NetworkUtils {
 
         @Override
         public void start() {
+            Thread thread = new Thread(this);
+            thread.start(); // Starts the new thread
+        }
+
+        @Override
+        public void run() {
             // Create a thread pool to handle client connections
             try (ServerSocket serverSocket = new ServerSocket(Integer.parseInt(p.getProperty("port")))) {
                 logger.info("Server is listening on port {}", serverSocket.getLocalPort());
@@ -100,6 +104,7 @@ public class MockNetworkUtils implements NetworkUtils {
             listener = null;
             executorService.shutdown();
         }
+
     }
 
 
