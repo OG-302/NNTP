@@ -7,8 +7,6 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.Properties;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -22,31 +20,28 @@ class MockNetworkUtilsTest {
         props.setProperty("port", "3119");
 
         // start server
-        NetworkUtils.ServiceManager serviceManager = networkUtils.registerService(new NetworkUtils.ConnectionListener() {
-            @Override
-            public void onConnection(NetworkUtils.ProtocolStreams newConnection) {
-                try (
-                        PersistenceService persistenceService = new MockPersistenceService();
-                        IdentityService identityService = new MockIdentityService();
-                        PolicyService policyService = new MockPolicyService();
-                ) {
-                    // Setup backend storage
-                    persistenceService.init();
+        NetworkUtils.ServiceManager serviceManager = networkUtils.registerService(newConnection -> {
+            try (
+                    PersistenceService persistenceService = new MockPersistenceService();
+                    IdentityService identityService = new MockIdentityService();
+                    PolicyService policyService = new MockPolicyService()
+            ) {
+                // Setup backend storage
+                persistenceService.init();
 
-                    // wire-up protocol engine
-                    ProtocolEngine protocolEngine = new ProtocolEngine(persistenceService, identityService, policyService, newConnection);
+                // wire-up protocol engine
+                ProtocolEngine protocolEngine = new ProtocolEngine(persistenceService, identityService, policyService, newConnection);
 
-                    // let 'er rip
-                    if (!protocolEngine.start()) {
-                        System.err.println("Error encountered during client communication.");
-                    }
-                } catch (IOException e) {
-                    System.err.println("Error handling client: " + e.getMessage());
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                } finally {
-                    newConnection.close();
+                // let 'er rip
+                if (!protocolEngine.start()) {
+                    System.err.println("Error encountered during client communication.");
                 }
+            } catch (IOException e) {
+                System.err.println("Error handling client: " + e.getMessage());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            } finally {
+                newConnection.close();
             }
         }, props);
         serviceManager.start();
