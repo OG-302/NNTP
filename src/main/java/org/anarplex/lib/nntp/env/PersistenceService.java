@@ -8,23 +8,25 @@ import java.util.Iterator;
 
 /**
  * The PersistentService interface provides a simple API for storing and retrieving articles and newsgroups.  It is
- * designed to be abstract enough to support multiple storage backends.
+ * designed to be abstract enough to support multiple storage backends and not just relational databases.
  * Each PersistentService **instance** will be used by one NNTP client and will be invoked by the same thread during
  * its lifetime.
- * Init() will be called at the start of the lifecycle and terminate() at the end.
+ * Init() will be called at the start of the lifecycle and close() at the end.
  */
 public interface PersistenceService extends AutoCloseable {
 
+    // explicitly readies the PersistentService for use
     void init();
 
+    // make outstanding updates permanent
     void commit();
 
+    // indicates no further use of this service's instance.  Invoking close() with uncommitted updates will abort those updates
     void close();
 
     /**
-     * hasArticle determines whether the specified message id exists in the database, regardless of whether it is
-     * rejected or not.
-     * This function is idempotent.
+     * hasArticle determines whether the specified message id exists in the database.  Rejected articles are not
+     * included.  To determine if an article exists in the store but has been marked as rejected, use isRejectedArticle().
      *
      * @param messageId
      * @return true if the message id exists, false otherwise
@@ -33,6 +35,7 @@ public interface PersistenceService extends AutoCloseable {
 
     /**
      * getArticle returns the article with the specified message id or null if it does not exist.
+     * Rejected articles are never returned.
      *
      * @param messageId
      * @return the article with the specified message id or null if it does not exist
@@ -48,7 +51,8 @@ public interface PersistenceService extends AutoCloseable {
     Iterator<Specification.MessageId> getArticleIdsAfter(Date after);
 
     /**
-     * rejectArticle marks the specified message id as rejected.
+     * rejectArticle marks the specified message id as rejected.  A rejected article will not be returned
+     * to readers.
      *
      * @param messageId
      */
@@ -80,6 +84,12 @@ public interface PersistenceService extends AutoCloseable {
 
     Iterator<Newsgroup> listAllGroupsAddedSince(Date insertedTime);
 
+    /**
+     * getGroupByName returns the Newsgroup with the specified name or nil if no such Newsgroup exists.
+     * Ignored newsgroups will be included in the results.
+     * @param name
+     * @return
+     */
     Newsgroup getGroupByName(Specification.NewsgroupName name);
 
     /**
@@ -108,6 +118,7 @@ public interface PersistenceService extends AutoCloseable {
      */
     Iterator<Peer> getPeers();
 
+
     class ExistingNewsgroupException extends Exception {
         public ExistingNewsgroupException(String message) {
             super(message);
@@ -134,9 +145,7 @@ public interface PersistenceService extends AutoCloseable {
     /**
      * Newsgroup is a structure that contains a list of Articles and their ArticleNumbers in a particular Newsgroup.
      * This object maintains the state of the Newsgroup cursor (Current Article Number).  The cursor is initially set
-     * to Invalid.  Invoking the gotoNextArticle or gotoPreviousArticle functions will change the Current Article Number.
-     * Invoking getArticle() or getArticleNumbered() will change the Current Article Number.
-     */
+     * to Invalid.     */
     interface Newsgroup {
         /**
          * GetName returns the immutable and normalised Newsgroup's name
@@ -233,13 +242,10 @@ public interface PersistenceService extends AutoCloseable {
         Iterator<NewsgroupArticle> getArticlesSince(Date insertionTime);
 
         /**
-         * GetCurrentArticle returns the Article Number of the Current Article in this Newsgroup, or nil if there is
-         * none.
-         * This method DOES NOT change the current article number (cursor).
-         *
-         * @return the Article Number of the Current Article in this Newsgroup, or null if there is none
+         * Identifies the first Article in this Newsgroup or nil if there are no Articles.
+         * @return the first Article in this Newsgroup or nil if there are no Articles.
          */
-        NewsgroupArticle getCurrentArticle();
+        NewsgroupArticle getFirstArticle();
 
         /*
          * The following three methods are NON-Idempotent functions!
@@ -256,7 +262,7 @@ public interface PersistenceService extends AutoCloseable {
          *
          * @return the next article to the Current Article, if exists or nil if none
          */
-        NewsgroupArticle gotoNextArticle();
+        NewsgroupArticle gotoNextArticle(Specification.ArticleNumber currentArticle);
 
         /**
          * GotoPreviousArticle changes the CURRENT Article to be the Article with the next LOWER valid article number in
@@ -264,29 +270,15 @@ public interface PersistenceService extends AutoCloseable {
          *
          * @return the previous article to the Current Article, if exists or nil if none
          */
-        NewsgroupArticle gotoPreviousArticle();
+        NewsgroupArticle gotoPreviousArticle(Specification.ArticleNumber currentArticle);
 
-        /**
-         * GotoArticleWithNumber sets the CURRENT Article to be the one which has the specified Article Number.
-         * If an Article exists within the Newsgroup with the specified ArticleNumber, then the function returns the
-         * messageID of that article.
-         * If no such numbered Article exists in the Newsgroup then the CURRENT position is set to Invalid and the function
-         * returns false.
-         * If there was an error encountered during the operation, err is returned.
-         *
-         * @param articleNumber
-         * @return the NewsgroupArticle with the specified ArticleNumber or nil if no such ArticleNumber exists
-         */
-        NewsgroupArticle gotoArticleWithNumber(Specification.ArticleNumber articleNumber);
     }
 
     /**
-     * NewsgroupArticle is a structure that contains an Article and its ArticleNumber in a particular Newsgroup.
+     * NewsgroupArticle is an Article located in a particular Newsgroup
      */
-    interface NewsgroupArticle {
+    interface NewsgroupArticle extends Article {
         Specification.ArticleNumber getArticleNumber();
-        Specification.MessageId getMessageId();
-        Article getArticle();
         Newsgroup getNewsgroup();
     }
 

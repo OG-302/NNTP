@@ -18,7 +18,7 @@ public interface PolicyService extends AutoCloseable {
      * isPostingAllowed determines whether the specified submitter is allowed to submit (new) articles via the POST
      * command.
      *
-     * @param submitter
+     * @param submitter or null if the submitter is unknown or anonymous
      * @return true if article Posting by this submitter is allowed, false otherwise
      */
     boolean isPostingAllowed(Subject submitter);

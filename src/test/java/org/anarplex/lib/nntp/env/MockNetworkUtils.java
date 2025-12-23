@@ -165,25 +165,11 @@ public class MockNetworkUtils implements NetworkUtils {
         InputStream inputStream;
         OutputStream outputStream;
 
-        public MockProtocolStreams() {
-            inputStream = new ByteArrayInputStream(new byte[0]);
-            outputStream = new ByteArrayOutputStream();
-        }
-
-        public MockProtocolStreams(String inputString, ByteArrayOutputStream outputStream) {
-            inputStream = new ByteArrayInputStream(inputString.getBytes(StandardCharsets.UTF_8));
-            this.outputStream = outputStream;
-        }
-
         public MockProtocolStreams(InputStream inputStream, ByteArrayOutputStream outputStream) {
             this.inputStream = inputStream;
             this.outputStream = outputStream;
         }
 
-        public MockProtocolStreams(ByteArrayOutputStream outputStream) {
-            inputStream = new ByteArrayInputStream(new byte[0]);
-            this.outputStream = outputStream;
-        }
 
         @Override
         public InputStream getInputStream() {

@@ -24,9 +24,9 @@ import java.util.function.Function;
  */
 public class ProtocolEngine {
 
-    public static final String NNTP_VERSION = "2";  // RFC 3977 - NNTP Version 2.0
-    public static final String NNTP_SERVER = "Postus";
-    public static final String NNTP_SERVER_VERSION = "0.7";
+    public static final String NNTP_VERSION = "2";  // RFC 3977 is NNTP Version 2.0
+    public static final String NNTP_SERVER = "Postus";  // this NNTP-lib implementation
+    public static final String NNTP_SERVER_VERSION = "0.7"; // build version
 
     private static final Logger logger = LoggerFactory.getLogger(ProtocolEngine.class);
 
@@ -35,13 +35,12 @@ public class ProtocolEngine {
     /**
      * Creates a new NNTP Server instance for use by a single NNTP Client.  This method is not thread-safe and
      * should only be called once per client connection and not shared between multiple threads or clients.
-     * @param persistenceService
-     * @param identityService
-     * @param policyService
-     * @param protocolStreams
      */
     public ProtocolEngine(PersistenceService persistenceService, IdentityService identityService, PolicyService policyService, NetworkUtils.ProtocolStreams protocolStreams) {
-        if (persistenceService != null && identityService != null && policyService != null && protocolStreams != null) {
+        if (persistenceService != null
+                && identityService != null
+                && policyService != null
+                && protocolStreams != null) {
 
             // load the dispatcher with handlers for each NNTP Command
             dispatcher = new CommandDispatcher(
@@ -54,9 +53,11 @@ public class ProtocolEngine {
             // configure the command handler with this dispatcher
             setCommandHandlers(dispatcher);
 
-            // update local log newsgroup: local.nntp.postus.log
             try {
+                // ready persistence service for use
                 persistenceService.init();
+
+                // update local log newsgroup: local.nntp.postus.log
                 Specification.NewsgroupName logGroupName = new Specification.NewsgroupName("local.nntp.postus.log");
                 PersistenceService.Newsgroup logGroup = persistenceService.getGroupByName(logGroupName);
                 if (logGroup == null) {
@@ -73,33 +74,38 @@ public class ProtocolEngine {
                 articleHeaders.put(Specification.NNTP_Standard_Article_Headers.MessageID.getValue(), Set.of(msgID.getValue()));
                 Reader body = new StringReader("Server started at " + articleHeaders.get(Specification.NNTP_Standard_Article_Headers.Date.getValue()).iterator().next() + '\n');
                 Specification.Article.ArticleHeaders articleHeadersObj = new Specification.Article.ArticleHeaders(articleHeaders);
-                logGroup.addArticle(msgID, articleHeadersObj, body,false);
+                logGroup.addArticle(msgID, articleHeadersObj, body, false);
                 logGroup.setPostingMode(Specification.PostingMode.Prohibited);
 
-            } catch (Specification.NewsgroupName.InvalidNewsgroupNameException | PersistenceService.ExistingNewsgroupException |
-                     Specification.Article.ArticleHeaders.InvalidArticleHeaderException | Newsgroup.ExistingArticleException e) {
+            } catch (Specification.NewsgroupName.InvalidNewsgroupNameException |
+                     PersistenceService.ExistingNewsgroupException |
+                     Specification.Article.ArticleHeaders.InvalidArticleHeaderException |
+                     Newsgroup.ExistingArticleException e) {
                 throw new RuntimeException(e);
             }
-
         } else {
             throw new NullPointerException("persistenceService, identityService, policyService, inputStream and outputStream must not be null");
         }
     }
 
     /**
-     * Consumes a stream of NNTP Requests from a client and replies with a stream of corresponding NNTP Responses.
-     * Before returning, this method will terminate the supplied request and response streams.
-     * If the client ends the dialog gracefully (via the QUIT command), then true is returned.  But if an unrecoverable
-     * error is encountered, false is returned.
+     * Consumes a stream of NNTP Requests from a client and replies with a stream of NNTP Responses.
+     * Before returning, this method will close the supplied request and response streams.
+     * If the client terminates the dialog gracefully (via the QUIT command), then true is returned.  However, if an
+     * unrecoverable error is encountered, false is returned.
      *
-     * @return true if the client dialog ended without errors, false otherwise
+     * @return true if the dialog with the client ended without errors, false otherwise
      */
     public boolean start() {
 
+        boolean errorEncountered = false;   // whether an error was encountered during processing of the request
+
         try {
             if (dispatcher.clientContext.policyService.isPostingAllowed(null)) {
+                // Posting allowed
                 sendResponse(dispatcher.clientContext.responseStream, NNTP_Response_Code.Code_200, NNTP_SERVER, NNTP_SERVER_VERSION);
             } else {
+                // Posting prohibited
                 sendResponse(dispatcher.clientContext.responseStream, NNTP_Response_Code.Code_201, NNTP_SERVER, NNTP_SERVER_VERSION);
             }
 
@@ -107,38 +113,43 @@ public class ProtocolEngine {
                 dispatcher.clientContext.responseStream.flush();
                 dispatcher.clientContext.persistenceService.commit();
 
+                // parse the next request line
                 String line = dispatcher.clientContext.requestStream.readLine();
                 if (line != null) {
                     String[] requestArgs = line.trim().split("\\s+");   // split the command line on whitespace
                     if (0 < requestArgs.length) {
                         boolean result = dispatcher.applyHandler(requestArgs);  // submit the request to the dispatcher
                         if (requestArgs[0].equalsIgnoreCase("QUIT")) {
-                            return result;
+                            return (errorEncountered = result);  // exit on QUIT command
                         } else {
-                            if (result) {
+                            if (result) {   // no problems encountered so far...
                                 continue; // continue to process the next request
                             } else {
-                                return false; // request processing resulted in an error.  exit processing
+                                return false; // request processing encountered an error.  exit processing
                             }
                         }
                     } else {
-                        return false; // no command name was found
+                        return false; // no command found in the request line
                     }
                 }
-                return true;    // no more input to process
+                return (errorEncountered = true);    // no more input to process
             } while (true);
         } catch (Exception e) {
-            sendResponse(dispatcher.clientContext.responseStream, NNTP_Response_Code.Code_500);
+            // all encountered exceptions are fatal and result in a 500 response
             logger.error(e.getMessage(), e);
+            sendResponse(dispatcher.clientContext.responseStream, NNTP_Response_Code.Code_500);
             return false;
         } finally {
-            dispatcher.clientContext.persistenceService.commit();
+            if (!errorEncountered) {
+                dispatcher.clientContext.persistenceService.commit();
+            }
             try {
                 dispatcher.clientContext.responseStream.flush();
                 dispatcher.clientContext.requestStream.close();
                 dispatcher.clientContext.responseStream.close();
                 dispatcher.clientContext.protocolStreams.close();
-            } catch (IOException _) {}
+            } catch (IOException _) {
+            }
         }
     }
 
@@ -157,7 +168,7 @@ public class ProtocolEngine {
      * @param c the client context containing services and I/O streams needed to
      *          process the ARTICLE command
      * @return true if the article is successfully retrieved and the response is
-     *         properly sent, false otherwise
+     * properly sent, false otherwise
      */
     protected static Boolean handleArticle(ClientContext c) {
         return articleRequest(c, true, true);
@@ -184,7 +195,7 @@ public class ProtocolEngine {
      * @param c the client context, which includes services and streams
      *          required to handle the command
      * @return true if the body of the article is successfully retrieved,
-     *         false if an error occurs
+     * false if an error occurs
      */
     protected static Boolean handleBody(ClientContext c) {
         return articleRequest(c, false, true);
@@ -199,7 +210,7 @@ public class ProtocolEngine {
      * @param c the client context, which includes necessary services and streams
      *          required to process the STAT command
      * @return true if the request was successfully processed and the article exists,
-     *         false otherwise
+     * false otherwise
      */
     protected static Boolean handleStat(ClientContext c) {
         return articleRequest(c, false, false);
@@ -208,13 +219,13 @@ public class ProtocolEngine {
     /**
      * This implementation is NOT a mode-switching server (as defined in RFC 3977).
      *
-     * @param c
-     * @return
      */
     protected static Boolean handleMode(ClientContext c) {
         if (c.policyService.isPostingAllowed(null)) {
+            // posting allowed
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_200, "MODE READER");
         } else {
+            // posting prohibited
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_201, "MODE READER");
         }
     }
@@ -404,46 +415,120 @@ public class ProtocolEngine {
         return true;
     }
 
+    /* Sends back information about the specified Newsgroup.
+     * As per RFC-3977: When a valid group is selected by means of this command, the currently selected newsgroup
+     * MUST be set to that group, and the current article number MUST be set to the first article in the group
+     * (this applies even if the group is already the currently selected newsgroup).
+     */
     protected static Boolean handleGroup(ClientContext c) {
         String[] args = c.requestArgs;
-        
+
         // GROUP command requires exactly one argument: the newsgroup name
         if (args.length != 2) {
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_501);  // syntax error
         }
-        
+
         String groupNameStr = args[1];
-        
+
         try {
-            // Validate and create newsgroup name
+            // Validate and parse newsgroup name
             Specification.NewsgroupName groupName = new Specification.NewsgroupName(groupNameStr);
-            
-            // Retrieve the newsgroup from the persistence service
+
+            // Search for the newsgroup in the persistence service
             PersistenceService.Newsgroup newsgroup = c.persistenceService.getGroupByName(groupName);
-            
+
             // Check if the newsgroup exists
             if (newsgroup == null || newsgroup.isIgnored()) {
                 return sendResponse(c.responseStream, NNTP_Response_Code.Code_411);  // no such newsgroup
             }
-            
-            // Set as current newsgroup
-            c.currentGroup = newsgroup;
-            
+
+            // Set as current newsgroup, which also has the side effect of setting the current article pointer to the
+            // first article in the group
+            c.currentArticleAndGroup.setCurrentGroup(newsgroup);
+
             // Get newsgroup metrics
             PersistenceService.NewsgroupMetrics metrics = newsgroup.getMetrics();
-            
+
             // Send response: 211 count low high group
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_211,
                     metrics.getNumberOfArticles(),
                     metrics.getLowestArticleNumber(),
                     metrics.getHighestArticleNumber(),
                     groupName.getValue());
-            
+
         } catch (Specification.NewsgroupName.InvalidNewsgroupNameException e) {
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_501);  // syntax error - invalid newsgroup name
         } catch (Exception e) {
-            logger.error("Error in GROUP command: " + e.getMessage(), e);
+            logger.error("Error in GROUP command: {}", e.getMessage(), e);
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_403);  // internal fault
+        }
+    }
+
+    protected static Boolean handleListGroup(ClientContext c) {
+        String[] args = c.requestArgs;
+
+        // LISTGROUP [newsgroup]
+        if (args.length > 2) {
+            return sendResponse(c.responseStream, NNTP_Response_Code.Code_501); // syntax error
+        }
+
+        if (args.length == 2) {
+            // Use the provided newsgroup argument
+            try {
+                Specification.NewsgroupName groupName = new Specification.NewsgroupName(args[1]);
+                Newsgroup newsgroup = c.persistenceService.getGroupByName(groupName);
+                if (newsgroup == null || newsgroup.isIgnored()) {
+                    return sendResponse(c.responseStream, NNTP_Response_Code.Code_411); // no such newsgroup
+                }
+                c.currentArticleAndGroup.setCurrentGroup(newsgroup);
+            } catch (Specification.NewsgroupName.InvalidNewsgroupNameException e) {
+                return sendResponse(c.responseStream, NNTP_Response_Code.Code_501); // syntax error
+            }
+        } else {
+            // No argument. There must be a currently selected group
+            if (c.currentArticleAndGroup.getCurrentGroup() == null) {
+                return sendResponse(c.responseStream, NNTP_Response_Code.Code_412); // no newsgroup selected
+            }
+
+            // set current article pointer to first article in the group
+            c.currentArticleAndGroup.setCurrentArticle(c.currentArticleAndGroup.getCurrentGroup().getFirstArticle());
+        }
+
+        try {
+            PersistenceService.NewsgroupMetrics metrics = c.currentArticleAndGroup.getCurrentGroup().getMetrics();
+
+            // Initial response: 211 count low high group
+            if (!sendResponse(c.responseStream, NNTP_Response_Code.Code_211,
+                    metrics.getNumberOfArticles(),
+                    metrics.getLowestArticleNumber(),
+                    metrics.getHighestArticleNumber(),
+                    c.currentArticleAndGroup.getCurrentGroup().getName().getValue())) {
+                return false;
+            }
+
+            // Now list article numbers, one per line, then terminating dot
+            Specification.ArticleNumber low = metrics.getLowestArticleNumber();
+            Specification.ArticleNumber high = metrics.getHighestArticleNumber();
+
+            if (low != null && high != null && metrics.getNumberOfArticles() > 0) {
+                Iterator<PersistenceService.NewsgroupArticle> it =
+                        c.currentArticleAndGroup.getCurrentGroup().getArticlesNumbered(low, high);
+                while (it.hasNext()) {
+                    PersistenceService.NewsgroupArticle a = it.next();
+                    c.responseStream.write(Integer.toString(a.getArticleNumber().getValue()));
+                    c.responseStream.write("\r\n");
+                }
+            }
+
+            c.responseStream.write(".\r\n");
+            c.responseStream.flush();
+            return true;
+        } catch (IOException e) {
+            logger.error("Error writing LISTGROUP response: {}", e.getMessage(), e);
+            return false;
+        } catch (Exception e) {
+            logger.error("Error handling LISTGROUP: {}", e.getMessage(), e);
+            return sendResponse(c.responseStream, NNTP_Response_Code.Code_403);
         }
     }
 
@@ -451,12 +536,12 @@ public class ProtocolEngine {
         String[] args = c.requestArgs;
 
         try {
-            // OVER with no arguments → use current article in current group
             if (args.length == 1) {
-                if (c.currentGroup == null) {
+                // OVER with no arguments → use current article of the current group
+                if (c.currentArticleAndGroup.getCurrentGroup() == null) {
                     return sendResponse(c.responseStream, NNTP_Response_Code.Code_412); // no newsgroup selected
                 }
-                if (c.currentGroup.getCurrentArticle() == null) {
+                if (c.currentArticleAndGroup.getCurrentArticle() == null) {
                     return sendResponse(c.responseStream, NNTP_Response_Code.Code_420); // current article number invalid
                 }
 
@@ -464,9 +549,8 @@ public class ProtocolEngine {
                 if (!sendResponse(c.responseStream, NNTP_Response_Code.Code_224)) {
                     return false;
                 }
-
-                PersistenceService.NewsgroupArticle a = c.currentGroup.getCurrentArticle();
-                writeOverviewLine(c, a.getArticleNumber().getValue(), a.getArticle());
+                PersistenceService.NewsgroupArticle a = c.currentArticleAndGroup.getCurrentArticle();
+                writeOverviewLine(c, a.getArticleNumber().getValue(), a);
                 c.responseStream.write(".\r\n");
                 c.responseStream.flush();
                 return true;
@@ -488,24 +572,24 @@ public class ProtocolEngine {
                         return sendResponse(c.responseStream, NNTP_Response_Code.Code_430); // no article with that message-id
                     }
 
-                    // Determine article number within current group, if any
-                    int numberForLine = 0;
-                    if (c.currentGroup != null) {
-                        Specification.ArticleNumber n = c.currentGroup.getArticle(messageId);
-                        if (n != null) numberForLine = n.getValue();
+                    // Determine the article number within the current group, if any
+                    int articleNumber = 0;
+                    if (c.currentArticleAndGroup.getCurrentGroup() != null) {
+                        Specification.ArticleNumber n = c.currentArticleAndGroup.getCurrentGroup().getArticle(messageId);
+                        if (n != null) articleNumber = n.getValue();
                     }
 
                     if (!sendResponse(c.responseStream, NNTP_Response_Code.Code_224)) {
                         return false;
                     }
-                    writeOverviewLine(c, numberForLine, article);
+                    writeOverviewLine(c, articleNumber, article);
                     c.responseStream.write(".\r\n");
                     c.responseStream.flush();
                     return true;
 
                 } else {
                     // Range form requires a selected group
-                    if (c.currentGroup == null) {
+                    if (c.currentArticleAndGroup.getCurrentGroup() == null) {
                         return sendResponse(c.responseStream, NNTP_Response_Code.Code_412); // no newsgroup selected
                     }
 
@@ -525,7 +609,7 @@ public class ProtocolEngine {
                                 high = Integer.parseInt(parts[1]);
                             }
                         } else {
-                            // Single number means that single article
+                            // Single number means a single article
                             low = Integer.parseInt(argument);
                             high = low;
                         }
@@ -538,14 +622,14 @@ public class ProtocolEngine {
                     Specification.ArticleNumber upperBound;
                     try {
                         if (low == null) {
-                            // "-m" not supported: treat as syntax error per conservative approach
+                            // format "-m" not supported: treat this as a syntax error per conservative approach
                             return sendResponse(c.responseStream, NNTP_Response_Code.Code_501);
                         }
                         lowerBound = new Specification.ArticleNumber(low);
 
                         if (high == null) {
-                            // n- → up to current group's highest
-                            PersistenceService.NewsgroupMetrics metrics = c.currentGroup.getMetrics();
+                            // format "n-" → up to the current group's highest
+                            PersistenceService.NewsgroupMetrics metrics = c.currentArticleAndGroup.getCurrentGroup().getMetrics();
                             Specification.ArticleNumber highest = metrics.getHighestArticleNumber();
                             if (highest == null) {
                                 return sendResponse(c.responseStream, NNTP_Response_Code.Code_423);
@@ -558,7 +642,7 @@ public class ProtocolEngine {
                         return sendResponse(c.responseStream, NNTP_Response_Code.Code_501); // syntax error
                     }
 
-                    Iterator<PersistenceService.NewsgroupArticle> it = c.currentGroup.getArticlesNumbered(lowerBound, upperBound);
+                    Iterator<PersistenceService.NewsgroupArticle> it = c.currentArticleAndGroup.getCurrentGroup().getArticlesNumbered(lowerBound, upperBound);
                     if (it == null || !it.hasNext()) {
                         return sendResponse(c.responseStream, NNTP_Response_Code.Code_423); // no article in that range
                     }
@@ -568,7 +652,7 @@ public class ProtocolEngine {
                     }
                     while (it.hasNext()) {
                         PersistenceService.NewsgroupArticle nga = it.next();
-                        writeOverviewLine(c, nga.getArticleNumber().getValue(), nga.getArticle());
+                        writeOverviewLine(c, nga.getArticleNumber().getValue(), nga);
                     }
                     c.responseStream.write(".\r\n");
                     c.responseStream.flush();
@@ -587,19 +671,19 @@ public class ProtocolEngine {
     protected static Boolean handlePost(ClientContext c) {
         String[] args = c.requestArgs;
 
-        // POST command requires exactly zero arguments
         if (args.length != 1) {
+            // the POST command should have exactly zero arguments
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_501);  // syntax error
         }
 
-        Subject submitter = null; // TODO obtain submitter's subject from the client
+        Subject submitter = null; // TODO obtain submitter's identity from the client session
 
         if (!c.policyService.isPostingAllowed(submitter)) {
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_440); // posting is not allowed
         }
 
+        // Article is wanted - ask the client to send it
         try {
-            // Article is wanted - request the client to send it
             if (!sendResponse(c.responseStream, NNTP_Response_Code.Code_340)) {  // send article to be transferred
                 return false;
             }
@@ -665,8 +749,8 @@ public class ProtocolEngine {
 
                 String headerName = headerLine.substring(0, colonIndex).trim();
                 if (headerName.isEmpty() ||
-                    headerName.equalsIgnoreCase(Specification.NNTP_Standard_Article_Headers.Lines.getValue()) ||
-                    headerName.equalsIgnoreCase(Specification.NNTP_Standard_Article_Headers.Bytes.getValue())) {
+                        headerName.equalsIgnoreCase(Specification.NNTP_Standard_Article_Headers.Lines.getValue()) ||
+                        headerName.equalsIgnoreCase(Specification.NNTP_Standard_Article_Headers.Bytes.getValue())) {
                     // not interested in hearing about these headers
                     continue;
                 }
@@ -690,16 +774,21 @@ public class ProtocolEngine {
             try {
                 headers = new Specification.Article.ArticleHeaders(headerMap);
             } catch (Specification.Article.ArticleHeaders.InvalidArticleHeaderException e) {
-                logger.error("Invalid article headers: " + e.getMessage(), e);
+                logger.error("Invalid article headers: {}", e.getMessage(), e);
                 return sendResponse(c.responseStream, NNTP_Response_Code.Code_441);  // transfer rejected
             }
 
             // obtain messageID
             Specification.MessageId messageId = new Specification.MessageId(headers.getHeaderValue(Specification.NNTP_Standard_Article_Headers.MessageID.getValue()).iterator().next());
 
-            // check to see if an article with this message-id already exists in the persistence service
+            // check to see if an article with this message-id already exists in the persistence service.
             if (c.persistenceService.hasArticle(messageId)) {
                 return sendResponse(c.responseStream, NNTP_Response_Code.Code_441);    // transfer rejected
+            }
+
+            // Check if such an article was previously rejected
+            if (c.persistenceService.isRejectedArticle(messageId)) {
+                return sendResponse(c.responseStream, NNTP_Response_Code.Code_441);  // the article isn't wanted
             }
 
             // Extract newsgroups from headers
@@ -709,7 +798,7 @@ public class ProtocolEngine {
             }
 
             // Check policy for each newsgroup and add article to allowed newsgroups
-            boolean addedToAnyGroup = false;
+            boolean addedToSomeGroup = false;
 
             for (String newsgroupName : newsgroupsHeader) {
                 newsgroupName = newsgroupName.trim();
@@ -729,7 +818,7 @@ public class ProtocolEngine {
                         // Create a StringReader for the body
                         StringReader bodyReader = new StringReader(bodyText);
 
-                        // Check policy if article is allowed in this newsgroup
+                        // Check policy if the article is allowed in this newsgroup
                         // Note: For IHAVE, we use the peer policies (assuming the client is a peer)
                         // In a real implementation, you would get the actual peer identity
                         // For now, we'll check if policy service allows it
@@ -739,43 +828,49 @@ public class ProtocolEngine {
                         // Add article to the newsgroup
                         try {
                             newsgroup.addArticle(messageId, headers, bodyReader, !isApproved);
-                            addedToAnyGroup = true;
+                            addedToSomeGroup = true;
                         } catch (PersistenceService.Newsgroup.ExistingArticleException e) {
                             // Article already exists in this newsgroup - that's ok, skip it
-                            logger.debug("Article already exists in newsgroup " + newsgroupName);
+                            logger.debug("Article already exists in newsgroup {}", newsgroupName);
                         }
                     }
                 } catch (Specification.NewsgroupName.InvalidNewsgroupNameException e) {
-                    logger.warn("Invalid newsgroup name in article: " + newsgroupName);
+                    logger.warn("Invalid newsgroup name in article: {}", newsgroupName);
                     // Continue with other newsgroups
                 }
             }
 
-            if (!addedToAnyGroup) {
+            if (!addedToSomeGroup) {
                 // Article wasn't added to any newsgroup
+                logger.warn("Article wasn't added to any of our newsgroups");
                 return sendResponse(c.responseStream, NNTP_Response_Code.Code_441);  // transfer rejected
             }
+
+            c.persistenceService.commit();
 
             // Article successfully transferred
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_240);  // article transferred OK
 
         } catch (Specification.MessageId.InvalidMessageIdException e) {
+            logger.error("Invalid message-id in article: {}", e.getMessage(), e);
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_501);  // syntax error
         } catch (Exception e) {
-            logger.error("Error in IHAVE command: " + e.getMessage(), e);
+            logger.error("Error in IHAVE command: {}", e.getMessage(), e);
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_441);  // transfer failed
         }
     }
 
     /**
      * Write one OVER/OVERVIEW line per RFC 3977 / XOVER compatibility.
-     * Format (tab-separated):
-     *  number TAB subject TAB from TAB date TAB message-id TAB references TAB bytes TAB lines
+     * Format (fields are tab-separated):
+     * number TAB subject TAB from TAB date TAB message-id TAB references TAB bytes TAB lines
      * Missing optional fields are emitted as empty.
      */
     private static void writeOverviewLine(ClientContext c, int articleNumber, PersistenceService.Article article) throws IOException {
+        // fetch all headers of the article
         Specification.Article.ArticleHeaders headers = article.getAllHeaders();
 
+        // extract individual standard headers from the article
         String subject = headerFirst(headers, Specification.NNTP_Standard_Article_Headers.Subject.getValue());
         String from = headerFirst(headers, Specification.NNTP_Standard_Article_Headers.From.getValue());
         String date = headerFirst(headers, Specification.NNTP_Standard_Article_Headers.Date.getValue());
@@ -785,7 +880,7 @@ public class ProtocolEngine {
         String bytes = headerFirst(headers, Specification.NNTP_Standard_Article_Headers.Bytes.getValue());
         String lines = headerFirst(headers, Specification.NNTP_Standard_Article_Headers.Lines.getValue());
 
-        // Ensure non-null strings and strip CR/LF per overview constraints
+        // Ensure non-null strings and strip CR/LF per Overview constraints
         subject = sanitizeOverviewValue(subject);
         from = sanitizeOverviewValue(from);
         date = sanitizeOverviewValue(date);
@@ -794,18 +889,17 @@ public class ProtocolEngine {
         bytes = sanitizeOverviewValue(bytes);
         lines = sanitizeOverviewValue(lines);
 
-        StringBuilder sb = new StringBuilder();
-        sb.append(articleNumber).append('\t')
-          .append(subject).append('\t')
-          .append(from).append('\t')
-          .append(date).append('\t')
-          .append(messageId).append('\t')
-          .append(references).append('\t')
-          .append(bytes).append('\t')
-          .append(lines)
-          .append("\r\n");
+        String sb = String.valueOf(articleNumber) + '\t' +
+                subject + '\t' +
+                from + '\t' +
+                date + '\t' +
+                messageId + '\t' +
+                references + '\t' +
+                bytes + '\t' +
+                lines +
+                "\r\n";
 
-        c.responseStream.write(sb.toString());
+        c.responseStream.write(sb);
     }
 
     private static String headerFirst(Specification.Article.ArticleHeaders headers, String name) {
@@ -831,9 +925,12 @@ public class ProtocolEngine {
         return b.toString();
     }
 
+    /**
+     * Removes CR and LF, and replaces tabs with spaces to keep tab-separated output compatible with XOVER.
+     * Replaces null string with empty string.
+     */
     private static String sanitizeOverviewValue(String s) {
         if (s == null) return "";
-        // Remove CR and LF, and replace tabs with spaces to keep tab-separated format intact
         return s.replace("\r", " ").replace("\n", " ").replace('\t', ' ');
     }
 
@@ -849,75 +946,77 @@ public class ProtocolEngine {
      * HEAD -> (sendHeaders, sendBody) == true, false
      * BODY -> (sendHeaders, sendBody) == false, true
      * STAT -> (sendHeaders, sendBody) == false, false
-     *
-     * @param c
-     * @param sendHeaders
-     * @param sendBody
-     * @return
+     * When the ARTICLE/HEAD/BODY/STAT request specifies an article number, then the current article pointer is updated
+     * to that article within the selected (current) group.
      */
     private static Boolean articleRequest(ClientContext c, boolean sendHeaders, boolean sendBody) {
 
         String[] args = c.requestArgs;
 
         PersistenceService.Article article = null;
-        int articleNumberReply = 0;
+        int articleNumberInReply = 0;
 
-        // obtain the article requested by the client
+        // get the article requested by the client
         if (args.length == 1) {
-            // No argument provided - use the current article
+            // RFC's Third Form.  No argument provided - use the current article
 
             // Check if a newsgroup is currently selected
-            if (c.currentGroup == null) {
+            if (c.currentArticleAndGroup.getCurrentGroup() == null) {
                 return sendResponse(c.responseStream, NNTP_Response_Code.Code_412);  // no newsgroup selected
             }
 
             // Check if the current newsgroup has a current article
-            if (c.currentGroup.getCurrentArticle() == null) {
+            if (c.currentArticleAndGroup.getCurrentArticle() == null) {
                 return sendResponse(c.responseStream, NNTP_Response_Code.Code_420); // the current article number is invalid
             }
 
-            article = c.currentGroup.getCurrentArticle().getArticle();
-            articleNumberReply = c.currentGroup.getCurrentArticle().getArticleNumber().getValue();
+            NewsgroupArticle a = c.currentArticleAndGroup.getCurrentArticle();
+            articleNumberInReply = a.getArticleNumber().getValue();
+            article = a;
 
         } else if (args.length == 2) {
             String argument = args[1];
 
-            // Check if argument is a message-id (starts with '<' and ends with '>')
+            // Check if the argument is a message-id (starts with '<' and ends with '>')
             if (argument.startsWith("<") && argument.endsWith(">")) {
-                // Argument is a message-id
+                // RFC's First Form.  Argument is a message-id
                 try {
                     Specification.MessageId messageId = new Specification.MessageId(argument);
 
-                    // Check if an article exists in the persistence service
+                    // look up the specified article.  Rejected articles will not be returned.
                     article = c.persistenceService.getArticle(messageId);
+
+                    // Check if an article exists in the persistence service
                     if (article == null) {
                         return sendResponse(c.responseStream, NNTP_Response_Code.Code_430);  // no article with that message-id
                     }
 
-                    // if there is a current newsgroup, see if this article belongs to it.  A side-effect of this will
-                    // be to move the current article cursor of the newsgroup to the article.
-                    if (c.currentGroup != null) {
-                        // Get the article number corresponding to this article in the current newsgroup (if exists)
-                        Specification.ArticleNumber n = c.currentGroup.getArticle(messageId);
-                        if (n != null) {
-                            articleNumberReply = n.getValue();
-                        }
-                    }
+                    // as per RFC, the server MUST NOT alter the currently selected newsgroup or current article number in this case
                 } catch (IllegalArgumentException | Specification.MessageId.InvalidMessageIdException e) {
                     return sendResponse(c.responseStream, NNTP_Response_Code.Code_430);  // invalid message-id format
                 }
             } else {
-                // Argument is an article number
+                // RFC's Second Form.  Argument should be an article number
                 try {
                     int articleNumber = Integer.parseInt(argument);
                     Specification.ArticleNumber articleNum = new Specification.ArticleNumber(articleNumber);
 
-                    NewsgroupArticle numberedArticle = c.currentGroup.getArticleNumbered(articleNum);
+                    // this mode presumes a current group is selected
+                    // Check if a newsgroup is currently selected
+                    if (c.currentArticleAndGroup.getCurrentGroup() == null) {
+                        return sendResponse(c.responseStream, NNTP_Response_Code.Code_412);  // no newsgroup selected
+                    }
+
+                    // If there is an article with that number in the currently selected newsgroup, the
+                    // server MUST set the current article number to that number.
+                    NewsgroupArticle numberedArticle = c.currentArticleAndGroup.getCurrentGroup().getArticleNumbered(articleNum);
                     if (numberedArticle == null) {
                         return sendResponse(c.responseStream, NNTP_Response_Code.Code_423);  // no article with that number
                     }
-                    article = numberedArticle.getArticle();
-                    articleNumberReply = articleNum.getValue();
+                    c.currentArticleAndGroup.setCurrentArticle(numberedArticle);
+                    article = numberedArticle;
+                    // article number is to be included in the response
+                    articleNumberInReply = articleNum.getValue();
                 } catch (NumberFormatException | Specification.ArticleNumber.InvalidArticleNumberException e) {
                     return sendResponse(c.responseStream, NNTP_Response_Code.Code_501);  // syntax error
                 }
@@ -927,18 +1026,14 @@ public class ProtocolEngine {
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_501);  // syntax error
         }
 
-        if (article == null) {
-            return sendResponse(c.responseStream, NNTP_Response_Code.Code_423);  // no such article
-        }
-
-        // send the response line
+        // send the response line: 220/221/222/223 <messageId>
         if (!sendResponse(c.responseStream,
                 (sendHeaders)
-                        // ARTICLE response (220).  HEAD response (221)
+                        // ARTICLE -> response (220).  HEAD -> response (221)
                         ? ((sendBody) ? NNTP_Response_Code.Code_220 : NNTP_Response_Code.Code_221)
-                        // BODY response (222). STAT response (223)
+                        // BODY -> response (222). STAT -> response (223)
                         : ((sendBody) ? NNTP_Response_Code.Code_222 : NNTP_Response_Code.Code_223),
-                articleNumberReply,
+                articleNumberInReply,
                 article.getMessageId())) {
             return false;
         }
@@ -952,7 +1047,7 @@ public class ProtocolEngine {
                         String headerName = header.getKey();
                         if (headerName == null) continue;
                         if (headerName.equalsIgnoreCase(Specification.NNTP_Standard_Article_Headers.Lines.getValue()) ||
-                            headerName.equalsIgnoreCase(Specification.NNTP_Standard_Article_Headers.Bytes.getValue())) {
+                                headerName.equalsIgnoreCase(Specification.NNTP_Standard_Article_Headers.Bytes.getValue())) {
                             // TODO.  Skip.  Experimental
                             continue;
                         }
@@ -977,15 +1072,14 @@ public class ProtocolEngine {
                 if (bodyReader != null) {
                     char[] buffer = new char[8192];
                     int charsRead;
-                /*
-                 * Body is stored in database in transmission form
-                while ((charsRead = bodyReader.read(buffer)) != -1) {
-                    String chunk = new String(buffer, 0, charsRead);
-                    // Dot-stuff lines that start with a dot (per RFC 3977)
-                    chunk = chunk.replaceAll("(?m)^\\.", "..");
-                    c.responseStream.write(chunk);
-                }
-                 */
+
+                    while ((charsRead = bodyReader.read(buffer)) != -1) {
+                        String chunk = new String(buffer, 0, charsRead);
+                        // Dot-stuff lines that start with a dot (per RFC 3977)
+                        chunk = chunk.replaceAll("(?m)^\\.", "..");
+                        c.responseStream.write(chunk);
+                    }
+
                     while ((charsRead = bodyReader.read(buffer)) != -1) {
                         c.responseStream.write(buffer, 0, charsRead);
                     }
@@ -1015,12 +1109,12 @@ public class ProtocolEngine {
         if (c.requestArgs.length > 1) {
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_501);  // syntax error
         }
-        
+
         // Get current date/time in UTC
         java.text.SimpleDateFormat dateFormat = new java.text.SimpleDateFormat("yyyyMMddHHmmss");
         dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
         String dateTimeString = dateFormat.format(new Date());
-        
+
         // Send response: 111 yyyyMMddHHmmss
         return sendResponse(c.responseStream, NNTP_Response_Code.Code_111, dateTimeString);
     }
@@ -1081,24 +1175,22 @@ public class ProtocolEngine {
      * Articles submitted to a moderated group are run past the policy service and are then added to the newsgroup -
      * either marked as rejected or not depending on the policy service's decision.  Articles can subsequently be
      * marked as not rejected by the moderator at a later time.
-     *
+     * <p>
      * RFC-3977 on page 60 notes an example -
-     *    "Note that the message-id in the IHAVE command is not the same as the one
-     *    in the article headers; while this is bad practice and SHOULD NOT be
-     *    done, it is not forbidden."
-     *    In this implementation, the message-id in the IHAVE command MUST be the same as the one in the article headers
-     *    because it makes no sense when they are different.
-     * @param c
-     * @return
+     * "Note that the message-id in the IHAVE command is not the same as the one
+     * in the article headers; while this is bad practice and SHOULD NOT be
+     * done, it is not forbidden."
+     * In this implementation, the message-id in the IHAVE command MUST be the same as the one in the article headers
+     * because it makes no sense when they are different.
      */
     protected static Boolean handleIHave(ClientContext c) {
         String[] args = c.requestArgs;
-        
+
         // IHAVE command requires exactly one argument: the message-id
         if (args.length != 2) {
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_501);  // syntax error
         }
-        
+
         String messageIdStr = args[1];
 
         Subject submitter = null; // TODO obtain submitter's subject from the client
@@ -1110,56 +1202,56 @@ public class ProtocolEngine {
         try {
             // Validate message-id format
             Specification.MessageId messageId = new Specification.MessageId(messageIdStr);
-            
-            // Check if the article already exists in the persistence service
+
+            // Check if the article already exists in the persistence service.  Will not detect Rejected articles.
             if (c.persistenceService.hasArticle(messageId)) {
                 return sendResponse(c.responseStream, NNTP_Response_Code.Code_435);  // the article isn't wanted
             }
-            
+
             // Check if the article was previously rejected
             Boolean isRejected = c.persistenceService.isRejectedArticle(messageId);
             if (isRejected != null && isRejected) {
                 return sendResponse(c.responseStream, NNTP_Response_Code.Code_435);  // the article isn't wanted
             }
-            
+
             // Article is wanted - request the client to send it
             if (!sendResponse(c.responseStream, NNTP_Response_Code.Code_335)) {  // send article to be transferred
                 return false;
             }
-            
+
             // Read the article from the client (headers and body)
             StringBuilder articleText = new StringBuilder();
             String line;
-            
+
             try {
                 while ((line = c.requestStream.readLine()) != null) {
                     // Check for termination (single dot on a line)
                     if (".".equals(line)) {
                         break;
                     }
-                    
+
                     // Un-dot-stuff lines that start with two dots
                     if (line.startsWith("..")) {
                         line = line.substring(1);
                     }
-                    
+
                     articleText.append(line).append("\r\n");
                 }
             } catch (IOException e) {
                 logger.error("Error reading article: {}", e.getMessage(), e);
                 return sendResponse(c.responseStream, NNTP_Response_Code.Code_436);  // transfer failed
             }
-            
+
             // Parse the article into headers and body
             String articleContent = articleText.toString();
             int headerBodySeparator = articleContent.indexOf("\r\n\r\n");
-            
+
             if (headerBodySeparator == -1) {
                 // Invalid article format - no separator between headers and body
                 c.persistenceService.rejectArticle(messageId);
                 return sendResponse(c.responseStream, NNTP_Response_Code.Code_437);  // transfer rejected
             }
-            
+
             String headersText = articleContent.substring(0, headerBodySeparator);
             String bodyText = articleContent.substring(headerBodySeparator + 4);
 
@@ -1171,22 +1263,22 @@ public class ProtocolEngine {
             // Parse headers
             Map<String, Set<String>> headerMap = new HashMap<>();
             String[] headerLines = headersText.split("\r\n");
-            
+
             for (String headerLine : headerLines) {
                 if (headerLine.isEmpty()) continue;
-                
+
                 // Handle folded headers (continuation lines start with whitespace)
                 if (headerLine.startsWith(" ") || headerLine.startsWith("\t")) {
                     // This is a continuation of the previous header - skip for simplicity
                     continue;
                 }
-                
+
                 int colonIndex = headerLine.indexOf(':');
                 if (colonIndex == -1) {
                     // Invalid header line
                     return sendResponse(c.responseStream, NNTP_Response_Code.Code_437);  // transfer rejected
                 }
-                
+
                 String headerName = headerLine.substring(0, colonIndex).trim();
                 String headerValue = headerLine.substring(colonIndex + 1).trim();
 
@@ -1205,21 +1297,21 @@ public class ProtocolEngine {
 
             // Validate that the Message-ID header matches the message-id in the IHAVE command
             Set<String> messageIdHeaders = headerMap.get(Specification.NNTP_Standard_Article_Headers.MessageID.getValue());
-            if (messageIdHeaders == null || messageIdHeaders.size() != 1 || 
-                !messageIdHeaders.iterator().next().equals(messageIdStr)) {
+            if (messageIdHeaders == null || messageIdHeaders.size() != 1 ||
+                    !messageIdHeaders.iterator().next().equals(messageIdStr)) {
                 // Message-ID mismatch or missing
                 return sendResponse(c.responseStream, NNTP_Response_Code.Code_437);  // transfer rejected
             }
-            
+
             // Create ArticleHeaders object
             Specification.Article.ArticleHeaders headers;
             try {
                 headers = new Specification.Article.ArticleHeaders(headerMap);
             } catch (Specification.Article.ArticleHeaders.InvalidArticleHeaderException e) {
-                logger.error("Invalid article headers: " + e.getMessage(), e);
+                logger.error("Invalid article headers: {}", e.getMessage(), e);
                 return sendResponse(c.responseStream, NNTP_Response_Code.Code_437);  // transfer rejected
             }
-            
+
             // Extract newsgroups from headers
             Set<String> newsgroupsHeader = headerMap.get(Specification.NNTP_Standard_Article_Headers.Newsgroups.getValue());
             if (newsgroupsHeader == null || newsgroupsHeader.isEmpty()) {
@@ -1228,13 +1320,13 @@ public class ProtocolEngine {
 
             // Check policy for each newsgroup and add article to allowed newsgroups
             boolean addedToAnyGroup = false;
-            
+
             for (String newsgroupName : newsgroupsHeader) {
                 newsgroupName = newsgroupName.trim();
-                
+
                 try {
                     Specification.NewsgroupName groupName = new Specification.NewsgroupName(newsgroupName);
-                    
+
                     // Check if the newsgroup exists
                     PersistenceService.Newsgroup newsgroup = c.persistenceService.getGroupByName(groupName);
                     if (newsgroup == null || newsgroup.isIgnored()) {
@@ -1242,13 +1334,12 @@ public class ProtocolEngine {
                         continue;
                     }
 
-
                     // Check if the article is approved to be added to the newsgroup
                     if (newsgroup.getPostingMode().getValue() != Specification.PostingMode.Prohibited.getValue()) {
                         // Create a StringReader for the body
                         StringReader bodyReader = new StringReader(bodyText);
 
-                        // Check policy if article is allowed in this newsgroup
+                        // Check policy if the article is allowed in this newsgroup
                         // Note: For IHAVE, we use the peer policies (assuming the client is a peer)
                         // In a real implementation, you would get the actual peer identity
                         // For now, we'll check if policy service allows it
@@ -1261,36 +1352,41 @@ public class ProtocolEngine {
                             addedToAnyGroup = true;
                         } catch (PersistenceService.Newsgroup.ExistingArticleException e) {
                             // Article already exists in this newsgroup - that's ok, skip it
-                            logger.debug("Article already exists in newsgroup " + newsgroupName);
+                            logger.debug("Article already exists in newsgroup:  {} ", newsgroupName);
                         }
                     }
                 } catch (Specification.NewsgroupName.InvalidNewsgroupNameException e) {
-                    logger.warn("Invalid newsgroup name in article: " + newsgroupName);
+                    logger.warn("Invalid newsgroup name in article: {}", newsgroupName);
                     // Continue with other newsgroups
                 }
             }
-            
+
             if (!addedToAnyGroup) {
                 // Article wasn't added to any newsgroup
+                logger.warn("Article wasn't destined for any of our newsgroups");
                 return sendResponse(c.responseStream, NNTP_Response_Code.Code_437);  // transfer rejected
             }
-            
+
+            c.persistenceService.commit();
+
             // Article successfully transferred
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_235);  // article transferred OK
-            
+
         } catch (Specification.MessageId.InvalidMessageIdException e) {
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_501);  // syntax error
         } catch (Exception e) {
-            logger.error("Error in IHAVE command: " + e.getMessage(), e);
+            logger.error("Error in IHAVE command: {}", e.getMessage(), e);
             return sendResponse(c.responseStream, NNTP_Response_Code.Code_436);  // transfer failed
         }
     }
 
     protected static Boolean handleLast(ClientContext c) {
-        if (c.currentGroup != null) {
-            if (c.currentGroup.getCurrentArticle() != null) {
-                NewsgroupArticle a = c.currentGroup.gotoPreviousArticle();  // go to the previous newsgroup article
+        if (c.currentArticleAndGroup.getCurrentGroup() != null) {
+            if (c.currentArticleAndGroup.getCurrentArticle() != null) {
+                NewsgroupArticle a = c.currentArticleAndGroup.getCurrentGroup().gotoPreviousArticle(
+                        c.currentArticleAndGroup.getCurrentArticle().getArticleNumber());  // go to the previous newsgroup article
                 if (a != null) {
+                    c.currentArticleAndGroup.setCurrentArticle(a);
                     return sendResponse(c.responseStream, NNTP_Response_Code.Code_223, a.getArticleNumber(), a.getMessageId());
                 } else {
                     return sendResponse(c.responseStream, NNTP_Response_Code.Code_422);   // no previous article in this group
@@ -1397,7 +1493,7 @@ public class ProtocolEngine {
                 c.responseStream.write(".\r\n");
                 c.responseStream.flush();
                 return true;
-            } catch(IOException e){
+            } catch (IOException e) {
                 logger.error("Error in LIST command: " + e.getMessage(), e);
                 throw new RuntimeException(e);
             }
@@ -1407,78 +1503,15 @@ public class ProtocolEngine {
         }
     }
 
-    protected static Boolean handleListGroup(ClientContext c) {
-        String[] args = c.requestArgs;
 
-        // LISTGROUP [newsgroup]
-        if (args.length > 2) {
-            return sendResponse(c.responseStream, NNTP_Response_Code.Code_501); // syntax error
-        }
-
-        PersistenceService.Newsgroup targetGroup = null;
-
-        if (args.length == 2) {
-            // Use the provided newsgroup argument (do not change currentGroup per RFC)
-            try {
-                Specification.NewsgroupName groupName = new Specification.NewsgroupName(args[1]);
-                targetGroup = c.persistenceService.getGroupByName(groupName);
-                if (targetGroup == null || targetGroup.isIgnored()) {
-                    return sendResponse(c.responseStream, NNTP_Response_Code.Code_411); // no such newsgroup
-                }
-            } catch (Specification.NewsgroupName.InvalidNewsgroupNameException e) {
-                return sendResponse(c.responseStream, NNTP_Response_Code.Code_501); // syntax error
-            }
-        } else {
-            // No argument: must have a currently selected group
-            if (c.currentGroup == null) {
-                return sendResponse(c.responseStream, NNTP_Response_Code.Code_412); // no newsgroup selected
-            }
-            targetGroup = c.currentGroup;
-        }
-
-        try {
-            PersistenceService.NewsgroupMetrics metrics = targetGroup.getMetrics();
-
-            // Initial response: 211 count low high group
-            if (!sendResponse(c.responseStream, NNTP_Response_Code.Code_211,
-                    metrics.getNumberOfArticles(),
-                    metrics.getLowestArticleNumber(),
-                    metrics.getHighestArticleNumber(),
-                    targetGroup.getName().getValue())) {
-                return false;
-            }
-
-            // Now list article numbers, one per line, then terminating dot
-            Specification.ArticleNumber low = metrics.getLowestArticleNumber();
-            Specification.ArticleNumber high = metrics.getHighestArticleNumber();
-
-            if (low != null && high != null && metrics.getNumberOfArticles() > 0) {
-                Iterator<PersistenceService.NewsgroupArticle> it =
-                        targetGroup.getArticlesNumbered(low, high);
-                while (it.hasNext()) {
-                    PersistenceService.NewsgroupArticle a = it.next();
-                    c.responseStream.write(Integer.toString(a.getArticleNumber().getValue()));
-                    c.responseStream.write("\r\n");
-                }
-            }
-
-            c.responseStream.write(".\r\n");
-            c.responseStream.flush();
-            return true;
-        } catch (IOException e) {
-            logger.error("Error writing LISTGROUP response: {}", e.getMessage(), e);
-            return false;
-        } catch (Exception e) {
-            logger.error("Error handling LISTGROUP: {}", e.getMessage(), e);
-            return sendResponse(c.responseStream, NNTP_Response_Code.Code_403);
-        }
-    }
 
     protected static Boolean handleNext(ClientContext c) {
-        if (c.currentGroup != null) {
-            if (c.currentGroup.getCurrentArticle() != null) {
-                NewsgroupArticle a = c.currentGroup.gotoNextArticle();  // proceed to the next newsgroup article
+        if (c.currentArticleAndGroup.getCurrentGroup() != null) {
+            if (c.currentArticleAndGroup.getCurrentArticle() != null) {
+                NewsgroupArticle a = c.currentArticleAndGroup.getCurrentGroup().gotoNextArticle(
+                        c.currentArticleAndGroup.getCurrentArticle().getArticleNumber());  // proceed to the next newsgroup article
                 if (a != null) {
+                    c.currentArticleAndGroup.setCurrentArticle(a);
                     return sendResponse(c.responseStream, NNTP_Response_Code.Code_223, a.getArticleNumber(), a.getMessageId());
                 } else {
                     return sendResponse(c.responseStream, NNTP_Response_Code.Code_421);   // no next article in this group
@@ -1498,18 +1531,63 @@ public class ProtocolEngine {
 
     // every NNTP Client connection is given its own context object.  None of these services are shared between clients.
     protected static class ClientContext {
+        // various services needed by the protocol engine and that are external (arbitrary) to this implementation.
         private final PersistenceService persistenceService;
         private final IdentityService identityService;
         private final PolicyService policyService;
         private final NetworkUtils.ProtocolStreams protocolStreams;
 
+        // the engine uses buffered readers and writers for efficiency
         private final BufferedReader requestStream;
-        BufferedWriter responseStream;
+        private final BufferedWriter responseStream;
 
-        protected Newsgroup currentGroup;
+        /* In NNTP there is a concept of a current newsgroup and current article.  These are considered contexts
+         * for some commands, so that group and article number don't need to be explicitly specified.
+         * The following NNTP commands change the current article pointer:
+         * The ARTICLE command, when used with an article number, sets the current article pointer to the specified
+         * article within the selected newsgroup.
+         * The STAT command, when used with an article number, serves to set the current article pointer without returning any text.
+         * The GROUP command selects a newsgroup and sets the current article pointer to the first article in that group.
+         * The NEXT command advances the current article pointer to the next message in the newsgroup.
+         * The LAST command sets the current article pointer to the last message in the current newsgroup.
+         * The HEAD and BODY commands, when used with an article number, set the current article pointer to the specified article.
+         * The LISTGROUP command, when used with a group name, sets the current article pointer to the first article in
+         * the specified group.
+         * Such updates to the current article pointer are done through the setCurrentArticle() method.
+         */
+        protected static class CurrentArticleAndGroup {
+            // in NNTP there is a notion of a current group. i.e. a context for some commands.
+            private PersistenceService.Newsgroup cg;
+            // in NNTP there is a notion of a current article. i.e. a context for some commands.
+            private NewsgroupArticle ca;
 
+            // accessors and mutators for the private fields, because there is logic to enforce
+            protected Newsgroup getCurrentGroup() {
+                return cg;
+            }
+
+            protected void setCurrentGroup(Newsgroup currentGroup) {
+                // a new Current Group resets the Current Article to the first article (if any) of the Current Newsgroup.
+                this.cg = currentGroup;
+                this.ca = (currentGroup == null ? null : currentGroup.getFirstArticle());
+            }
+
+            protected NewsgroupArticle getCurrentArticle() {
+                return ca;
+            }
+
+            protected void setCurrentArticle(NewsgroupArticle currentArticle) {
+                this.ca = currentArticle;
+            }
+        }
+
+        protected final CurrentArticleAndGroup currentArticleAndGroup = new CurrentArticleAndGroup();
+
+        // client's authentication token if they are authenticated
         protected Long authenticationToken;
-        String[] requestArgs;  // Store the parsed request arguments
+
+        // Store the parsed request arguments
+        private String[] requestArgs;
 
         ClientContext(PersistenceService persistenceService, IdentityService identityService,
                       PolicyService policyService, NetworkUtils.ProtocolStreams protocolStreams) {
@@ -1517,7 +1595,8 @@ public class ProtocolEngine {
             this.identityService = identityService;
             this.policyService = policyService;
             this.protocolStreams = protocolStreams;
-            this.requestStream  = new BufferedReader(new InputStreamReader(protocolStreams.getInputStream(), StandardCharsets.UTF_8)); // NNTP specifies UTF-8
+            // RFC-3977 specifies that all communication channels use UTF-8 encoding.
+            this.requestStream = new BufferedReader(new InputStreamReader(protocolStreams.getInputStream(), StandardCharsets.UTF_8));
             this.responseStream = new BufferedWriter(new OutputStreamWriter(protocolStreams.getOutputStream(), StandardCharsets.UTF_8));
         }
     }
@@ -1552,7 +1631,7 @@ public class ProtocolEngine {
 
         // nntpCommandHandlers is a map of NNTP command names to their corresponding handlers.  The handlers read an
         // input stream and write an output stream.  The handlers return true if the operation was successful, implying
-        // that further stream processing should be done by other handlers; false otherwise (e.g. due to errors, etc).
+        // that further stream processing should be done by other handlers; false otherwise (e.g. due to errors, etc.).
         private final EnumMap<Specification.NNTP_Request_Commands, Function<ClientContext, Boolean>> nntpCommandHandlers = new EnumMap<>(Specification.NNTP_Request_Commands.class);
 
         private final ClientContext clientContext;
@@ -1568,7 +1647,6 @@ public class ProtocolEngine {
 
         /**
          * Returns the names of the handlers that were added to this dispatcher.
-         * @return
          */
         String[] getHandlerNames() {
             return nntpCommandHandlers.keySet()

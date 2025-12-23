@@ -10,10 +10,6 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.StringReader;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.*;
 
 import static org.anarplex.lib.nntp.Specification.NNTP_Standard_Article_Headers;
@@ -38,7 +34,7 @@ class MockPersistenceServiceTest {
     static MockPersistenceService persistenceService;
 
     @BeforeAll
-    static void initialiseDatabase() throws Specification.MessageId.InvalidMessageIdException, Specification.NewsgroupName.InvalidNewsgroupNameException {
+    static void initialiseDatabase() throws Specification.MessageId.InvalidMessageIdException, Specification.NewsgroupName.InvalidNewsgroupNameException, PersistenceService.ExistingNewsgroupException, Specification.Article.ArticleHeaders.InvalidArticleHeaderException, PersistenceService.Newsgroup.ExistingArticleException {
         assertNotNull(nonExistentMessageId);
 
         if (persistenceService == null) {
@@ -47,87 +43,41 @@ class MockPersistenceServiceTest {
             persistenceService.init();
 
             // load database with known values
+            String groupName = "local.tmp.test.nntp-lib.g" + RandomNumber.generate10DigitNumber();
+            PersistenceService.Newsgroup[] newsgroups = new PersistenceService.Newsgroup[validGroupName.length];
+
+            for (int i = 0; i < validGroupName.length; i++) {
+                validGroupName[i] = new Specification.NewsgroupName(groupName + i);
+
+                // create a known group based on ValidGroupName[]
+                 newsgroups[i] = persistenceService.addGroup(validGroupName[i],
+                        "created for testing purposes",
+                        Specification.PostingMode.Allowed,
+                        new Date(startTime.getTime()),
+                        "test case",
+                        false);
+            }
+
+            // create some known articles
             for (int i = 0; i < validMessageId.length; i++) {
                 validMessageId[i] = new Specification.MessageId("<"+ RandomNumber.generate10DigitNumber()+">");
             }
 
-            String groupName = "local.tmp.test.nntp-lib.g" + RandomNumber.generate10DigitNumber();
-            for (int i = 0; i < validGroupName.length; i++) {
-                validGroupName[i] = new Specification.NewsgroupName(groupName + i);
-            }
+            Map<String, Set<String>> headers = new HashMap<>();
+            headers.put(NNTP_Standard_Article_Headers.References.getValue(), Collections.singleton("<.>"));
+            headers.put(NNTP_Standard_Article_Headers.Subject.getValue(), Collections.singleton("test subject"));
+            headers.put(NNTP_Standard_Article_Headers.From.getValue(), Collections.singleton("me"));
+            headers.put(NNTP_Standard_Article_Headers.Date.getValue(), Collections.singleton("1 Jan 1970 00:00:01"));
+            // headers.put(NNTP_Standard_Article_Headers.Lines.getValue(), Collections.singleton("100"));
+            // headers.put(NNTP_Standard_Article_Headers.Bytes.getValue(), Collections.singleton("1000"));
+            headers.put(NNTP_Standard_Article_Headers.Path.getValue(), Collections.singleton("path.to.article"));
 
-            // create some known articles
-            int[] existingArticlePK = new int[validMessageId.length];
-            for (int i = 0; i < validMessageId.length; i++) {
-                existingArticlePK[i] = -1;
-
-                try (PreparedStatement ps = persistenceService.dbConnection.prepareStatement(
-                        "insert into PUBLIC.NN_ARTICLES (messageID, insertionTime) values (?, ?)",
-                        Statement.RETURN_GENERATED_KEYS)) {
-                    ps.setString(1, validMessageId[i].toString());
-                    ps.setLong(2, startTime.getTime()/1000);    // seconds since epoch
-                    ps.executeUpdate();
-
-                    ResultSet rs = ps.getGeneratedKeys();
-                    if (rs.next()) {
-                        existingArticlePK[i] = rs.getInt(1);
-                    }
-                } catch (SQLException e) {
-                    throw new RuntimeException(e);
-                }
-                assertNotEquals(-1, existingArticlePK[i]);
-            }
-
-
-            // create a known group based on ValidGroupName[1]
-            int existingGroupPK = -1;
-            try (PreparedStatement ps = persistenceService.dbConnection.prepareStatement(
-                    "insert into PUBLIC.NN_NEWSGROUPS (name, description, insertionTime) values (?, 'created for testing purposes', ?)",
-                    Statement.RETURN_GENERATED_KEYS)) {
-                ps.setString(1, validGroupName[1].getValue());
-                ps.setLong(2, startTime.getTime()/1000);    // seconds since epoch
-                ps.executeUpdate();
-
-                ResultSet rs = ps.getGeneratedKeys();
-                if (rs.next()) {
-                    existingGroupPK = rs.getInt(1);
-                }
-            } catch (SQLException e) {
-                throw new RuntimeException(e);
-            }
-            assertNotEquals(-1, existingGroupPK);
-
-            // ensure the known articles are part of the known group
-            for (int i = 0; i < validMessageId.length; i++) {
-                try (PreparedStatement ps = persistenceService.dbConnection.prepareStatement(
-                        "insert into PUBLIC.NN_NEWSGROUP_ARTICLES (articleNum, newsgroupPK, articlePK) values (?,?,?)")) {
-                    ps.setInt(1, i+1);
-                    ps.setInt(2, existingGroupPK);
-                    ps.setInt(3, existingArticlePK[i]);
-                    int rows = ps.executeUpdate();
-
-                    assertEquals(1, rows);
-                } catch (SQLException e) {
-                    throw new RuntimeException(e);
-                }
-            }
-
-            // delete the supposedly non-existent Message with ID = <.> if exists
-            try (PreparedStatement ps = persistenceService.dbConnection.prepareStatement(
-                    "DELETE from PUBLIC.NN_ARTICLES WHERE messageID = ?")) {
-                ps.setString(1, nonExistentMessageId.toString());
-                ps.executeUpdate();
-            } catch (SQLException e) {
-                throw new RuntimeException(e);
-            }
-
-            // clean out the NN_NEWSGROUPSarticles table of non-existent groups and articles
-            // delete the supposedly non-existent Message with ID = <.> if exists
-            try {
-                persistenceService.dbConnection.createStatement().execute(
-                        "DELETE from PUBLIC.NN_NEWSGROUP_ARTICLES WHERE newsgroupPK NOT IN (SELECT newsgroupPK FROM PUBLIC.NN_NEWSGROUPS)");
-            } catch (SQLException e) {
-                throw new RuntimeException(e);
+            Reader body = new StringReader("This is a test article.\nLine 2.\nLine 3.");
+            for (Specification.MessageId messageId : validMessageId) {
+                headers.put(NNTP_Standard_Article_Headers.Newsgroups.getValue(), Collections.singleton(newsgroups[0].getName().getValue()));
+                headers.put(NNTP_Standard_Article_Headers.MessageID.getValue(), Collections.singleton(messageId.toString()));
+                Specification.Article.ArticleHeaders articleHeaders = new Specification.Article.ArticleHeaders(headers);
+                newsgroups[0].addArticle(messageId, articleHeaders, body, false);
             }
         }
     }
@@ -150,9 +100,9 @@ class MockPersistenceServiceTest {
 
     @Test
     void addArticle() throws Specification.MessageId.InvalidMessageIdException, Specification.Article.ArticleHeaders.InvalidArticleHeaderException, PersistenceService.Newsgroup.ExistingArticleException {
-        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[1]);
+        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[0]);
         assertNotNull(newsgroup);
-        
+
         // Create a unique message ID for this test
         Specification.MessageId newMessageId = new Specification.MessageId("<" + RandomNumber.generate10DigitNumber() + "@test.article>");
         assertNotNull(newMessageId);
@@ -168,46 +118,46 @@ class MockPersistenceServiceTest {
         headers.put(NNTP_Standard_Article_Headers.References.getValue(), Collections.singleton("<parent@test>"));
         headers.put(NNTP_Standard_Article_Headers.Lines.getValue(), Collections.singleton("3"));
         headers.put(NNTP_Standard_Article_Headers.Bytes.getValue(), Collections.singleton("42"));
-        
+
         // Create article headers
         Specification.Article.ArticleHeaders articleHeaders = new Specification.Article.ArticleHeaders(headers);
         assertNotNull(articleHeaders);
-        
+
         // Create article body
         String bodyContent = "This is a test article.\nLine 2.\nLine 3.";
         StringReader bodyReader = new StringReader(bodyContent);
-        
+
         // Get the current metrics before adding
         PersistenceService.NewsgroupMetrics metricsBefore = newsgroup.getMetrics();
         int articleCountBefore = metricsBefore.getNumberOfArticles();
         int highestArticleNumBefore = metricsBefore.getHighestArticleNumber().getValue();
-        
+
         // Add the article to the newsgroup
         PersistenceService.NewsgroupArticle newsgroupArticle = newsgroup.addArticle(newMessageId, articleHeaders, bodyReader, false);
-        
+
         // Verify the article was added successfully
         assertNotNull(newsgroupArticle);
         assertEquals(newMessageId, newsgroupArticle.getMessageId());
         assertEquals(newsgroup.getName(), newsgroupArticle.getNewsgroup().getName());
         assertEquals(highestArticleNumBefore + 1, newsgroupArticle.getArticleNumber().getValue());
-        
+
         // Verify the article can be retrieved
         PersistenceService.Article retrievedArticle = persistenceService.getArticle(newMessageId);
         assertNotNull(retrievedArticle);
         assertEquals(newMessageId, retrievedArticle.getMessageId());
-        
+
         // Verify headers were persisted correctly
         Specification.Article.ArticleHeaders retrievedHeaders = retrievedArticle.getAllHeaders();
         assertNotNull(retrievedHeaders);
-        
+
         Set<String> subjectHeader = retrievedHeaders.getHeaderValue(NNTP_Standard_Article_Headers.Subject.getValue());
         assertNotNull(subjectHeader);
         assertTrue(subjectHeader.contains("Test Article Subject"));
-        
+
         Set<String> fromHeader = retrievedHeaders.getHeaderValue(NNTP_Standard_Article_Headers.From.getValue());
         assertNotNull(fromHeader);
         assertTrue(fromHeader.contains("test@example.com"));
-        
+
         // Verify the article body was persisted correctly
         Reader bodyReader2 = retrievedArticle.getBody();
         assertNotNull(bodyReader2);
@@ -221,17 +171,17 @@ class MockPersistenceServiceTest {
         PersistenceService.NewsgroupMetrics metricsAfter = newsgroup.getMetrics();
         assertEquals(articleCountBefore + 1, metricsAfter.getNumberOfArticles());
         assertEquals(highestArticleNumBefore + 1, metricsAfter.getHighestArticleNumber().getValue());
-        
+
         // Verify the article exists
         assertTrue(persistenceService.hasArticle(newMessageId));
-        
+
         // Verify the article is not rejected
         assertFalse(persistenceService.isRejectedArticle(newMessageId));
     }
-    
+
     @Test
     void getArticleIdsAfter() {
-        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[1]);
+        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[0]);
         Iterator<PersistenceService.NewsgroupArticle> i = newsgroup.getArticlesSince(new Date(0));
 
         assertNotNull(i);
@@ -240,13 +190,13 @@ class MockPersistenceServiceTest {
         assertNotNull(a);
         assertEquals(validMessageId[0], a.getMessageId());
         assertEquals(1, a.getArticleNumber().getValue());
-        assertEquals(validGroupName[1], a.getNewsgroup().getName());
+        assertEquals(validGroupName[0], a.getNewsgroup().getName());
     }
 
     @Test
     void rejectArticle() {
-        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[1]);
-        PersistenceService.NewsgroupArticle a = newsgroup.getCurrentArticle();
+        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[0]);
+        PersistenceService.NewsgroupArticle a = newsgroup.getFirstArticle();
 
         assertNotNull(a);
     }
@@ -291,12 +241,6 @@ class MockPersistenceServiceTest {
             assertNotNull(g);
             assertNotNull(g.getName());
         }
-        assertNull(i.next());
-
-        while ((g = i.next()) != null) {
-            assertNotNull(g.getName());
-        }
-        assertFalse(i.hasNext());
     }
 
     @Test
@@ -312,27 +256,23 @@ class MockPersistenceServiceTest {
             assertNotNull(g);
             assertNotNull(g.getName());
         }
-        assertNull(i.next());
-        assertFalse(i.hasNext());
-
-        // use a time in the future to check that no groups are returned
-        i = persistenceService.listAllGroupsAddedSince(new Date(startTime.getTime() + 10000));  // ten seconds in the future
-        assertNotNull(i);
-        assertNull(i.next());
-        assertFalse(i.hasNext());
 
         // use a time in the future to check that no groups are returned
         i = persistenceService.listAllGroupsAddedSince(new Date(startTime.getTime() + 10000));  // ten seconds in the future
         assertNotNull(i);
         assertFalse(i.hasNext());
-        assertNull(i.next());
+
+        // use a time in the future to check that no groups are returned
+        i = persistenceService.listAllGroupsAddedSince(new Date(startTime.getTime() + 10000));  // ten seconds in the future
+        assertNotNull(i);
+        assertFalse(i.hasNext());
     }
 
     @Test
     void getGroupByName() {
-        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[1]);
+        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[0]);
         assertNotNull(newsgroup);
-        assertEquals(validGroupName[1], newsgroup.getName());
+        assertEquals(validGroupName[0], newsgroup.getName());
 
         PersistenceService.NewsgroupMetrics metrics =  newsgroup.getMetrics();
         assertNotNull(metrics);
@@ -346,7 +286,7 @@ class MockPersistenceServiceTest {
     }
 
     @Test
-    void addPeer() {
+    void addPeer() throws PersistenceService.ExistingPeerException {
         String address = "127.0.0.1";
         String label = "local.tmp.test.peer1."+System.currentTimeMillis();
         PersistenceService.Peer peer = persistenceService.addPeer(label, address);
@@ -357,7 +297,7 @@ class MockPersistenceServiceTest {
     }
 
     @Test
-    void removePeer() {
+    void removePeer() throws PersistenceService.ExistingPeerException {
         String address = "127.0.0.2";
         String label = "local.tmp.test.peer2."+System.currentTimeMillis();
         PersistenceService.Peer peer = persistenceService.addPeer(label, address);
@@ -394,17 +334,17 @@ class MockPersistenceServiceTest {
 
     @Test
     void getArticleInGroup() {
-        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[1]);
+        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[0]);
         assertNotNull(newsgroup);
 
-        Specification.ArticleNumber n = newsgroup.getArticle(validMessageId[1]);
+        Specification.ArticleNumber n = newsgroup.getArticle(validMessageId[0]);
         assertNotNull(n);
-        assertEquals(2, n.getValue());
+        assertEquals(1, n.getValue());
     }
 
     @Test
     void getArticleNumbered() throws Specification.ArticleNumber.InvalidArticleNumberException {
-        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[1]);
+        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[0]);
         assertNotNull(newsgroup);
 
         // jump to middle of group
@@ -412,80 +352,56 @@ class MockPersistenceServiceTest {
         assertNotNull(n);
         assertEquals(validMessageId[1], n.getMessageId());
         assertEquals(2, n.getArticleNumber().getValue());
-        assertEquals(validGroupName[1], n.getNewsgroup().getName());
+        assertEquals(validGroupName[0], n.getNewsgroup().getName());
     }
 
-    @Test
-    void getCurrentArticleInGroup() {
-        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[1]);
-        assertNotNull(newsgroup);
-
-        // current is always first article
-        PersistenceService.NewsgroupArticle a = newsgroup.getCurrentArticle();
-        assertNotNull(a);
-        assertEquals(1, a.getArticleNumber().getValue());
-        assertEquals(validMessageId[0], a.getMessageId());
-        assertEquals(validGroupName[1], a.getNewsgroup().getName());
-    }
 
     @Test
     void gotoNextArticleInGroup() {
-        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[1]);
+        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[0]);
         assertNotNull(newsgroup);
 
-        PersistenceService.NewsgroupArticle a = newsgroup.getCurrentArticle();
-        assertNotNull(a); // current is always first article
+        PersistenceService.NewsgroupArticle a = newsgroup.getFirstArticle();
+        assertNotNull(a);
         assertEquals(1, a.getArticleNumber().getValue());
         assertEquals(validMessageId[0], a.getMessageId());
 
-        a = newsgroup.gotoNextArticle();
-        assertNotNull(a);   // now current is on second article
-        assertNotNull(newsgroup.getCurrentArticle());
-        assertEquals(2, a.getArticleNumber().getValue());
-        assertEquals(validMessageId[1], newsgroup.getCurrentArticle().getMessageId());
+        PersistenceService.NewsgroupArticle b = newsgroup.gotoNextArticle(a.getArticleNumber());
+        assertNotNull(b);   // now current is on the second article
+        assertTrue(a.getArticleNumber().getValue() < b.getArticleNumber().getValue());
+        assertEquals(validMessageId[1], b.getMessageId());
 
-        a = newsgroup.gotoNextArticle();
-        assertNotNull(a);   // now current is on third article
-        assertNotNull(newsgroup.getCurrentArticle());
-        assertEquals(3, a.getArticleNumber().getValue());
-        assertEquals(validMessageId[2], a.getMessageId());
+        PersistenceService.NewsgroupArticle c = newsgroup.gotoNextArticle(b.getArticleNumber());
+        assertNotNull(c);   // now current is on the third article
+        assertTrue(b.getArticleNumber().getValue() < c.getArticleNumber().getValue());
+        assertEquals(validMessageId[2], c.getMessageId());
 
-        a = newsgroup.gotoNextArticle();
-        assertNull(a);  // because there is no next article
-
-        assertNotNull(newsgroup.getCurrentArticle());   // but current should still be on third article
-        assertEquals(3, newsgroup.getCurrentArticle().getArticleNumber().getValue());
-        assertEquals(validMessageId[2], newsgroup.getCurrentArticle().getMessageId());
+        c = newsgroup.gotoNextArticle(c.getArticleNumber());
+        assertNull(c);  // because there is no next article
     }
 
     @Test
     void gotoPreviousArticleInGroup() {
-        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[1]);
+        PersistenceService.Newsgroup newsgroup = persistenceService.getGroupByName(validGroupName[0]);
         assertNotNull(newsgroup);
 
-        PersistenceService.NewsgroupArticle a = newsgroup.getCurrentArticle();
-        assertNotNull(a);   // current is always first article
+        PersistenceService.NewsgroupArticle a = newsgroup.getFirstArticle();
+        assertNotNull(a);
         assertEquals(1, a.getArticleNumber().getValue());
+        assertEquals(validMessageId[0], a.getMessageId());
 
-        a = newsgroup.gotoPreviousArticle();
-        assertNull(a);  // because there is no previous article
+        PersistenceService.NewsgroupArticle b = newsgroup.gotoPreviousArticle(a.getArticleNumber());
+        assertNull(b);  // because there is no previous article
 
-        a = newsgroup.getCurrentArticle();
-        assertNotNull(a); // but current still be on first article
+        b = newsgroup.gotoNextArticle(a.getArticleNumber());
+        assertNotNull(b);
+        assertTrue(a.getArticleNumber().getValue() < b.getArticleNumber().getValue());
+        assertEquals(validMessageId[1], b.getMessageId());
+
+        a = newsgroup.gotoPreviousArticle(b.getArticleNumber());
+        assertNotNull(a);
         assertEquals(1, a.getArticleNumber().getValue());
-
-        a = newsgroup.gotoNextArticle();
-        assertNotNull(a);   // now current is on second article
-        assertEquals(2, a.getArticleNumber().getValue());
-
-        a = newsgroup.gotoNextArticle();
-        assertNotNull(a);   // now current is on third article
-        assertEquals(3, a.getArticleNumber().getValue());
-
-        a = newsgroup.gotoPreviousArticle();
-        assertNotNull(a);   // now current is on second article
-        assertEquals(2, newsgroup.getCurrentArticle().getArticleNumber().getValue());
-        assertEquals(validMessageId[1], newsgroup.getCurrentArticle().getMessageId());
+        assertEquals(validMessageId[0], a.getMessageId());
     }
 
 
@@ -518,7 +434,7 @@ class MockPersistenceServiceTest {
     @Test
     void articleHeadersPersistence() throws PersistenceService.Newsgroup.ExistingArticleException {
         // create headers to be persisted
-        Map<String, Set<String>> headers = new HashMap<String, Set<String>>();
+        Map<String, Set<String>> headers = new HashMap<>();
         long rn = RandomNumber.generate10DigitNumber();
         String testHeaderName = "testHeader-" + rn;
         Specification.MessageId mId = null;
@@ -559,7 +475,7 @@ class MockPersistenceServiceTest {
         assertNotNull(articleHeaders);  // all standard headers have been defined now
 
         // add a few more custom headers
-        headers.put(testHeaderName, new HashSet<String>(Arrays.asList("<th1>;<th2>", "<th3>", "<th4>")));
+        headers.put(testHeaderName, new HashSet<>(Arrays.asList("<th1>;<th2>", "<th3>", "<th4>")));
         try {
             articleHeaders = new Specification.Article.ArticleHeaders(headers);
         } catch (Specification.Article.ArticleHeaders.InvalidArticleHeaderException e) {
@@ -576,10 +492,10 @@ class MockPersistenceServiceTest {
         assertNotNull(na);
 
         // retrieve the article and check its contents
-        MockPersistenceService.ArticleRecord ar = persistenceService.getArticle(mId);
+        MockPersistenceService.Article ar = persistenceService.getArticle(mId);
 
         assertNotNull(ar);
-        assertEquals(mId, ar.messageId);
+        assertEquals(mId, ar.getMessageId());
 
         articleHeaders = ar.getAllHeaders();
         assertNotNull(articleHeaders);

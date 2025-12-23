@@ -133,7 +133,7 @@ public class Specification {
         }
 
         public static boolean contains(String v) {
-            return EnumSet.allOf(NNTP_Standard_Article_Headers.class).stream().anyMatch(e -> e.getValue().equals(v));
+            return EnumSet.allOf(NNTP_Standard_Article_Headers.class).stream().anyMatch(e -> e.getValue().equalsIgnoreCase(v));
         }
     }
 
@@ -329,7 +329,7 @@ public class Specification {
     final static int NoArticlesHighestNumber = -1;  // by NNTP convention this value is -1 but that choice not mandatory
 
     public static class NoArticlesLowestNumber extends ArticleNumber {
-        private NoArticlesLowestNumber() throws InvalidArticleNumberException {
+        public NoArticlesLowestNumber() throws InvalidArticleNumberException {
             super(NoArticlesLowestNumber);
         }
         public static NoArticlesLowestNumber getInstance() {
@@ -344,7 +344,7 @@ public class Specification {
     }
 
     public static class NoArticlesHighestNumber extends ArticleNumber {
-        private NoArticlesHighestNumber() throws InvalidArticleNumberException {
+        public NoArticlesHighestNumber() throws InvalidArticleNumberException {
             super(NoArticlesHighestNumber);
         }
         public static NoArticlesHighestNumber getInstance() {
@@ -396,7 +396,9 @@ public class Specification {
             }
 
             public ArticleHeaders(Map<String, Set<String>> headerFields) throws InvalidArticleHeaderException {
-                this.headerFields = validateHeaderFields(headerFields);
+                Map<String, Set<String>> caseInsensitiveHeaders = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+                caseInsensitiveHeaders.putAll(headerFields);
+            this.headerFields = validateHeaderFields(caseInsensitiveHeaders);
             }
 
             public Iterable<? extends Map.Entry<String, Set<String>>> entrySet() {
@@ -423,6 +425,7 @@ public class Specification {
                     EnumSet<NNTP_Standard_Article_Headers> stdArticlesHeaderSet = EnumSet.allOf(NNTP_Standard_Article_Headers.class);
 
                     for (NNTP_Standard_Article_Headers header : stdArticlesHeaderSet) {
+
                         if (!header.isOptional() && !headerFields.containsKey(header.getValue())) {
                             throw new InvalidArticleHeaderException("Missing required header field: " + header.getValue());
                         }
@@ -435,9 +438,7 @@ public class Specification {
                             Set<String> newsgroups = new HashSet<>();
                             for (String v : entry.getValue()) {
                                 String[] namesList = v.split(",");
-                                for (String name : namesList) {
-                                    newsgroups.add(name);
-                                }
+                                newsgroups.addAll(Arrays.asList(namesList));
                                 headerFields.put(entry.getKey(), newsgroups);
                             }
                         }

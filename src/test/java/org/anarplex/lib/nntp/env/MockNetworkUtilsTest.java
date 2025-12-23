@@ -81,7 +81,7 @@ class MockNetworkUtilsTest {
             public void setListLastFetched(Date lastFetched) {
             }
         };
-
+        Thread.sleep(2000); // wait for server to start
         NetworkUtils.ProtocolStreams clientSideStreams = networkUtils.connectToPeer(peer, props);
 
         // expect to find a welcome message
