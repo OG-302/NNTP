@@ -2,8 +2,11 @@ package org.anarplex.lib.nntp.env;
 
 import org.anarplex.lib.nntp.Specification;
 
-import java.io.Reader;
-import java.io.StringReader;
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -12,31 +15,163 @@ import java.util.stream.Collectors;
 /**
  * InMemory is an in-memory no-sql datastore implementation of PersistenceService.
  * All data is stored in memory using concurrent collections for thread safety.
+ * Data is persisted to disk on close() and restored on init().
  */
 public class MockPersistenceService implements PersistenceService {
 
-    private final Map<Specification.MessageId, ArticleImpl> articles = new ConcurrentHashMap<>();
-    private final Map<Specification.MessageId, Date> rejectedArticles = new ConcurrentHashMap<>();
-    private final Map<Specification.NewsgroupName, NewsgroupImpl> newsgroups = new ConcurrentHashMap<>();
-    private final Map<Integer, PeerImpl> peers = new ConcurrentHashMap<>();
-    private final AtomicInteger peerIdCounter = new AtomicInteger(1);
+    static private final Map<Specification.MessageId, NewsgroupArticle> articles = new ConcurrentHashMap<>();
+    static private final Map<Specification.MessageId, Date> rejectedArticles = new ConcurrentHashMap<>();
+    static private final Map<Specification.NewsgroupName, NewsgroupImpl> newsgroups = new ConcurrentHashMap<>();
+    static private final Map<String, PeerImpl> peers = new ConcurrentHashMap<>();
+    static private final AtomicInteger peerIdCounter = new AtomicInteger(1);
+
+    private static final String PERSISTENCE_DIR = "dataSources/mock-persistence";
+    private static final String ARTICLES_FILE = "articles.ser";
+    private static final String REJECTED_ARTICLES_FILE = "rejectedArticles.ser";
+    private static final String NEWSGROUPS_FILE = "newsgroups.ser";
+    private static final String PEERS_FILE = "peers.ser";
+    private static final String PEER_ID_COUNTER_FILE = "peerIdCounter.ser";
+
+    private static Boolean isDataLoaded = false;
 
     @Override
     public void init() {
-        // No initialization needed for in-memory implementation
+        loadFromDisk();
     }
 
     @Override
-    public void commit() {
-        // No commit needed for in-memory implementation
+    public void checkpoint() {
+        saveToDisk();
     }
 
     @Override
-    public void close() {
+    public void rollback() {
+        // For mock implementation, rollback clears everything and reloads from disk
         articles.clear();
         rejectedArticles.clear();
         newsgroups.clear();
         peers.clear();
+        loadFromDisk();
+    }
+
+    @Override
+    public void commit() {
+        saveToDisk();
+    }
+
+    @Override
+    public void close() {
+        saveToDisk();
+    }
+
+    private void saveToDisk() {
+        try {
+            Path persistenceDir = Paths.get(PERSISTENCE_DIR);
+            Files.createDirectories(persistenceDir);
+
+            // Save articles
+            try (ObjectOutputStream oos = new ObjectOutputStream(
+                    new FileOutputStream(persistenceDir.resolve(ARTICLES_FILE).toFile()))) {
+                oos.writeObject(new ConcurrentHashMap<>(articles));
+            }
+
+            // Save rejected articles
+            try (ObjectOutputStream oos = new ObjectOutputStream(
+                    new FileOutputStream(persistenceDir.resolve(REJECTED_ARTICLES_FILE).toFile()))) {
+                oos.writeObject(new ConcurrentHashMap<>(rejectedArticles));
+            }
+
+            // Save newsgroups
+            try (ObjectOutputStream oos = new ObjectOutputStream(
+                    new FileOutputStream(persistenceDir.resolve(NEWSGROUPS_FILE).toFile()))) {
+                oos.writeObject(new ConcurrentHashMap<>(newsgroups));
+            }
+
+            // Save peers
+            try (ObjectOutputStream oos = new ObjectOutputStream(
+                    new FileOutputStream(persistenceDir.resolve(PEERS_FILE).toFile()))) {
+                oos.writeObject(new ConcurrentHashMap<>(peers));
+            }
+
+            // Save peer ID counter
+            try (ObjectOutputStream oos = new ObjectOutputStream(
+                    new FileOutputStream(persistenceDir.resolve(PEER_ID_COUNTER_FILE).toFile()))) {
+                oos.writeInt(peerIdCounter.get());
+            }
+        } catch (IOException e) {
+            System.err.println("Warning: Failed to persist MockPersistenceService data: " + e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void loadFromDisk() {
+        if (isDataLoaded) {
+            return;
+        }
+
+        Path persistenceDir = Paths.get(PERSISTENCE_DIR);
+        if (!Files.exists(persistenceDir)) {
+            return; // No persisted data to load
+        }
+
+        try {
+            // Load articles
+            Path articlesPath = persistenceDir.resolve(ARTICLES_FILE);
+            if (Files.exists(articlesPath)) {
+                try (ObjectInputStream ois = new ObjectInputStream(
+                        new FileInputStream(articlesPath.toFile()))) {
+                    Map<Specification.MessageId, NewsgroupArticle> loadedArticles =
+                        (Map<Specification.MessageId, NewsgroupArticle>) ois.readObject();
+                    articles.putAll(loadedArticles);
+                }
+            }
+
+            // Load rejected articles
+            Path rejectedPath = persistenceDir.resolve(REJECTED_ARTICLES_FILE);
+            if (Files.exists(rejectedPath)) {
+                try (ObjectInputStream ois = new ObjectInputStream(
+                        new FileInputStream(rejectedPath.toFile()))) {
+                    Map<Specification.MessageId, Date> loadedRejected =
+                        (Map<Specification.MessageId, Date>) ois.readObject();
+                    rejectedArticles.putAll(loadedRejected);
+                }
+            }
+
+            // Load newsgroups
+            Path newsgroupsPath = persistenceDir.resolve(NEWSGROUPS_FILE);
+            if (Files.exists(newsgroupsPath)) {
+                try (ObjectInputStream ois = new ObjectInputStream(
+                        new FileInputStream(newsgroupsPath.toFile()))) {
+                    Map<Specification.NewsgroupName, NewsgroupImpl> loadedNewsgroups =
+                        (Map<Specification.NewsgroupName, NewsgroupImpl>) ois.readObject();
+                    newsgroups.putAll(loadedNewsgroups);
+                }
+            }
+
+            // Load peers
+            Path peersPath = persistenceDir.resolve(PEERS_FILE);
+            if (Files.exists(peersPath)) {
+                try (ObjectInputStream ois = new ObjectInputStream(
+                        new FileInputStream(peersPath.toFile()))) {
+                    Map<String, PeerImpl> loadedPeers =
+                        (Map<String, PeerImpl>) ois.readObject();
+                    peers.putAll(loadedPeers);
+                }
+            }
+
+            // Load peer ID counter
+            Path counterPath = persistenceDir.resolve(PEER_ID_COUNTER_FILE);
+            if (Files.exists(counterPath)) {
+                try (ObjectInputStream ois = new ObjectInputStream(
+                        new FileInputStream(counterPath.toFile()))) {
+                    peerIdCounter.set(ois.readInt());
+                }
+            }
+            isDataLoaded = true;
+        } catch (IOException | ClassNotFoundException e) {
+            System.err.println("Warning: Failed to load MockPersistenceService data: " + e.getMessage());
+            rollback();
+        }
     }
 
     @Override
@@ -45,15 +180,15 @@ public class MockPersistenceService implements PersistenceService {
     }
 
     @Override
-    public Article getArticle(Specification.MessageId messageId) {
+    public NewsgroupArticle getArticle(Specification.MessageId messageId) {
         return articles.get(messageId);
     }
 
     @Override
-    public Iterator<Specification.MessageId> getArticleIdsAfter(Date after) {
+    public Iterator<Specification.MessageId> getArticleIdsAfter(LocalDateTime after) {
         return articles.values().stream()
-                .filter(article -> article.insertionTime.after(after))
-                .map(ArticleImpl::getMessageId)
+                .filter(article -> article.getInsertionTime().isAfter(after))
+                .map(NewsgroupArticle::getMessageId)
                 .collect(Collectors.toList())
                 .iterator();
     }
@@ -70,7 +205,7 @@ public class MockPersistenceService implements PersistenceService {
 
     @Override
     public Newsgroup addGroup(Specification.NewsgroupName name, String description,
-                              Specification.PostingMode postingMode, Date createdAt,
+                              Specification.PostingMode postingMode, LocalDateTime createdAt,
                               String createdBy, boolean toBeIgnored) throws ExistingNewsgroupException {
         if (newsgroups.containsKey(name)) {
             throw new ExistingNewsgroupException("Newsgroup already exists: " + name);
@@ -90,9 +225,9 @@ public class MockPersistenceService implements PersistenceService {
         }
 
     @Override
-    public Iterator<Newsgroup> listAllGroupsAddedSince(Date insertedTime) {
+    public Iterator<Newsgroup> listAllGroupsAddedSince(LocalDateTime insertedTime) {
         return newsgroups.values().stream()
-                .filter(ng -> ng.getCreatedAt().after(insertedTime))
+                .filter(ng -> ng.getCreatedAt().isAfter(insertedTime))
                 .map(ng -> (Newsgroup) ng)
                 .collect(Collectors.toList())
                 .iterator();
@@ -106,19 +241,18 @@ public class MockPersistenceService implements PersistenceService {
     @Override
     public Peer addPeer(String label, String address) throws ExistingPeerException {
         for (PeerImpl peer : peers.values()) {
-            if (peer.getLabel().equals(label) || peer.getAddress().equals(address)) {
-                throw new ExistingPeerException("Peer already exists with label or address");
+            if (peer.getAddress().equals(address)) {
+                throw new ExistingPeerException("Peer already exists with that address");
             }
         }
-        int peerId = peerIdCounter.getAndIncrement();
-        PeerImpl peer = new PeerImpl(peerId, label, address);
-        peers.put(peerId, peer);
+        PeerImpl peer = new PeerImpl(label, address);
+        peers.put(peer.address, peer);
         return peer;
     }
 
     @Override
     public void removePeer(Peer peer) {
-        peers.remove(peer.getPk());
+        peers.remove(peer.getAddress());
         // Remove all feeds associated with this peer
         for (NewsgroupImpl newsgroup : newsgroups.values()) {
             newsgroup.removeFeedForPeer(peer);
@@ -132,63 +266,24 @@ public class MockPersistenceService implements PersistenceService {
 
     // Inner class implementations
 
-    private static class ArticleImpl implements Article {
-        private final Specification.MessageId messageId;
-        private final Specification.Article.ArticleHeaders headers;
-        private final String bodyContent;
-        private final Date insertionTime;
-
-        ArticleImpl(Specification.MessageId messageId, Specification.Article.ArticleHeaders headers, Reader body) {
-            this.messageId = messageId;
-            this.headers = headers;
-            this.bodyContent = readBody(body);
-            this.insertionTime = new Date();
-        }
-
-        private String readBody(Reader body) {
-            StringBuilder sb = new StringBuilder();
-            try {
-                char[] buffer = new char[1024];
-                int read;
-                while ((read = body.read(buffer)) != -1) {
-                    sb.append(buffer, 0, read);
-                }
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to read body", e);
-            }
-            return sb.toString();
-        }
-
-        @Override
-        public Specification.MessageId getMessageId() {
-            return messageId;
-        }
-
-        @Override
-        public Specification.Article.ArticleHeaders getAllHeaders() {
-            return headers;
-        }
-
-        @Override
-        public Reader getBody() {
-            return new StringReader(bodyContent);
-        }
-    }
-
-    private class NewsgroupImpl implements Newsgroup {
+    private static class NewsgroupImpl implements Newsgroup, Serializable {
+        @Serial
+        private static final long serialVersionUID = 1L;
         private final Specification.NewsgroupName name;
         private final String description;
         private Specification.PostingMode postingMode;
-        private final Date createdAt;
+        private final LocalDateTime createdAt;
         private final String createdBy;
         private boolean ignored;
-        private final Map<Specification.MessageId, NewsgroupArticleImpl> articles = new ConcurrentHashMap<>();
-        private final Map<Specification.ArticleNumber, NewsgroupArticleImpl> articlesByNumber = new ConcurrentHashMap<>();
-        private final Map<Integer, FeedImpl> feeds = new ConcurrentHashMap<>();
+
+        // storage
+        private final Map<Specification.MessageId, NewsgroupArticle> articles = new ConcurrentHashMap<>();
+        private final Map<Specification.ArticleNumber, NewsgroupArticle> articlesByNumber = new ConcurrentHashMap<>();
+        private final Map<String, FeedImpl> feeds = new ConcurrentHashMap<>();
         private final AtomicInteger articleNumberCounter = new AtomicInteger(1);
 
         NewsgroupImpl(Specification.NewsgroupName name, String description,
-                      Specification.PostingMode postingMode, Date createdAt,
+                      Specification.PostingMode postingMode, LocalDateTime createdAt,
                       String createdBy, boolean ignored) {
             this.name = name;
             this.description = description;
@@ -219,7 +314,7 @@ public class MockPersistenceService implements PersistenceService {
         }
 
         @Override
-        public Date getCreatedAt() {
+        public LocalDateTime getCreatedAt() {
             return createdAt;
         }
 
@@ -245,11 +340,11 @@ public class MockPersistenceService implements PersistenceService {
 
         @Override
         public Feed addFeed(Peer peer) throws ExistingFeedException {
-            if (feeds.containsKey(peer.getPk())) {
+            if (feeds.containsKey(peer.getAddress())) {
                 throw new ExistingFeedException("Feed already exists for peer: " + peer.getLabel());
             }
-            FeedImpl feed = new FeedImpl(peer);
-            feeds.put(peer.getPk(), feed);
+            FeedImpl feed = new FeedImpl(this, peer);
+            feeds.put(peer.getAddress(), feed);
             return feed;
         }
 
@@ -259,44 +354,46 @@ public class MockPersistenceService implements PersistenceService {
         }
 
         void removeFeedForPeer(Peer peer) {
-            feeds.remove(peer.getPk());
+            feeds.remove(peer.getAddress());
         }
 
         @Override
         public NewsgroupArticle addArticle(Specification.MessageId messageId,
                                            Specification.Article.ArticleHeaders headers,
-                                           Reader body, boolean isRejected) throws ExistingArticleException {
+                                           String body, boolean isRejected) throws ExistingArticleException {
             if (articles.containsKey(messageId)) {
                 throw new ExistingArticleException("Article already exists in newsgroup: " + messageId);
             }
 
-            // Create or get the article
-            ArticleImpl article = MockPersistenceService.this.articles.get(messageId);
-            if (article == null) {
-                article = new ArticleImpl(messageId, headers, body);
-                MockPersistenceService.this.articles.put(messageId, article);
-            }
-
-            if (isRejected) {
-                MockPersistenceService.this.rejectArticle(messageId);
-            }
-
-            // Add to newsgroup
+            // In this mock, we create a new article entry.
+            // We wrap it in our NewsgroupArticle implementation.
             Specification.ArticleNumber articleNumber;
             try {
                 articleNumber = new Specification.ArticleNumber(articleNumberCounter.getAndIncrement());
             } catch (Specification.ArticleNumber.InvalidArticleNumberException e) {
-                throw new RuntimeException(e);
+                throw new RuntimeException("Failed to generate article number", e);
             }
-            NewsgroupArticleImpl ngArticle = new NewsgroupArticleImpl(articleNumber, article, this);
+
+            // Create the underlying article representation for the mock
+            NewsgroupArticle ngArticle = new NewsgroupArticle(articleNumber, messageId, headers, body, this);
+
+            // Add to newsgroup-specific collections
             articles.put(messageId, ngArticle);
             articlesByNumber.put(articleNumber, ngArticle);
+
+            // Register globally in the PersistenceService
+            MockPersistenceService.articles.put(messageId, ngArticle);
+
+            if (isRejected) {
+                MockPersistenceService.rejectedArticles.put(messageId, new Date());
+            }
 
             return ngArticle;
         }
 
+
         @Override
-        public Specification.ArticleNumber includeArticle(NewsgroupArticle article) throws ExistingArticleException {
+        public Specification.ArticleNumber includeArticle(PersistenceService.NewsgroupArticle article) throws ExistingArticleException {
             Specification.MessageId messageId = article.getMessageId();
             if (articles.containsKey(messageId)) {
                 throw new ExistingArticleException("Article already exists in newsgroup: " + messageId);
@@ -308,7 +405,7 @@ public class MockPersistenceService implements PersistenceService {
             } catch (Specification.ArticleNumber.InvalidArticleNumberException e) {
                 throw new RuntimeException(e);
             }
-            NewsgroupArticleImpl ngArticle = new NewsgroupArticleImpl(articleNumber, (ArticleImpl) article, this);
+            NewsgroupArticle ngArticle = new NewsgroupArticle(articleNumber, (NewsgroupArticle) article, this);
             articles.put(messageId, ngArticle);
             articlesByNumber.put(articleNumber, ngArticle);
 
@@ -324,7 +421,7 @@ public class MockPersistenceService implements PersistenceService {
 
         @Override
         public Specification.ArticleNumber getArticle(Specification.MessageId messageId) {
-            NewsgroupArticleImpl article = articles.get(messageId);
+            NewsgroupArticle article = articles.get(messageId);
             return article != null ? article.getArticleNumber() : null;
         }
 
@@ -334,33 +431,33 @@ public class MockPersistenceService implements PersistenceService {
         }
 
         @Override
-        public Iterator<NewsgroupArticle> getArticlesNumbered(Specification.ArticleNumber lowerBound,
-                                                               Specification.ArticleNumber upperBound) {
+        public Iterator<PersistenceService.NewsgroupArticle> getArticlesNumbered(Specification.ArticleNumber lowerBound, Specification.ArticleNumber upperBound) {
+            long low = lowerBound.getValue();
+            long high = upperBound.getValue();
+
             return articlesByNumber.values().stream()
                     .filter(article -> {
                         long num = article.getArticleNumber().getValue();
-                        return num >= lowerBound.getValue() && num <= upperBound.getValue();
+                        return num >= low && num <= high;
                     })
-                    .sorted(Comparator.comparing(a -> a.getArticleNumber().getValue()))
-                    .map(article -> (NewsgroupArticle) article)
-                    .collect(Collectors.toList())
+                    .sorted(Comparator.comparingLong(a -> a.getArticleNumber().getValue()))
+                    .map(a -> (PersistenceService.NewsgroupArticle) a)
+                    .toList()
                     .iterator();
         }
 
         @Override
-        public Iterator<NewsgroupArticle> getArticlesSince(Date insertionTime) {
+        public Iterator<PersistenceService.NewsgroupArticle> getArticlesSince(LocalDateTime insertionTime) {
             return articles.values().stream()
-                    .filter(article -> article.article.insertionTime.after(insertionTime))
+                    .filter(article -> article.getInsertionTime().isAfter(insertionTime))
                     .sorted(Comparator.comparing(a -> a.getArticleNumber().getValue()))
-                    .map(article -> (NewsgroupArticle) article)
+                    .map(a -> (PersistenceService.NewsgroupArticle) a)
                     .collect(Collectors.toList())
                     .iterator();
         }
 
-
-
         @Override
-        public NewsgroupArticle gotoNextArticle(Specification.ArticleNumber currentArticleNumber) {
+        public NewsgroupArticle getNextArticle(Specification.ArticleNumber currentArticleNumber) {
             if (currentArticleNumber == null) {
                 return null;
             }
@@ -372,7 +469,7 @@ public class MockPersistenceService implements PersistenceService {
         }
 
         @Override
-        public NewsgroupArticle gotoPreviousArticle(Specification.ArticleNumber currentArticleNumber) {
+        public NewsgroupArticle getPreviousArticle(Specification.ArticleNumber currentArticleNumber) {
             if (currentArticleNumber == null) {
                 return null;
             }
@@ -385,16 +482,25 @@ public class MockPersistenceService implements PersistenceService {
         }
     }
 
-    private static class NewsgroupArticleImpl extends ArticleImpl implements NewsgroupArticle {
+    public static class NewsgroupArticle extends PersistenceService.NewsgroupArticle implements Serializable {
         private final Specification.ArticleNumber articleNumber;
-        private final ArticleImpl article;
         private final NewsgroupImpl newsgroup;
+        private final LocalDateTime insertionTime;
 
-        NewsgroupArticleImpl(Specification.ArticleNumber articleNumber, ArticleImpl article, NewsgroupImpl newsgroup) {
-            super(article.getMessageId(), article.headers, article.getBody());
+        NewsgroupArticle(Specification.ArticleNumber articleNumber, Specification.MessageId messageId,
+                         Specification.Article.ArticleHeaders headers, String body, NewsgroupImpl newsgroup) {
+            super(messageId, headers, body);
             this.articleNumber = articleNumber;
-            this.article = article;
             this.newsgroup = newsgroup;
+            this.insertionTime = LocalDateTime.now();
+        }
+
+        // Constructor for including an existing article
+        NewsgroupArticle(Specification.ArticleNumber articleNumber, NewsgroupArticle article, NewsgroupImpl newsgroup) {
+            super(article.getMessageId(), article.getAllHeaders(), article.getBody());
+            this.articleNumber = articleNumber;
+            this.newsgroup = newsgroup;
+            this.insertionTime = article.getInsertionTime();
         }
 
         @Override
@@ -405,6 +511,11 @@ public class MockPersistenceService implements PersistenceService {
         @Override
         public Newsgroup getNewsgroup() {
             return newsgroup;
+        }
+
+        @Override
+        public LocalDateTime getInsertionTime() {
+            return insertionTime;
         }
     }
 
@@ -449,12 +560,16 @@ public class MockPersistenceService implements PersistenceService {
         }
     }
 
-    private static class FeedImpl implements Feed {
+    private static class FeedImpl implements Feed, Serializable {
+        @Serial
+        private static final long serialVersionUID = 1L;
         private final Peer peer;
-        private Date lastSyncTime;
+        private final Newsgroup newsgroup;
+        private LocalDateTime lastSyncTime;
         private Specification.ArticleNumber lastSyncArticleNum;
 
-        FeedImpl(Peer peer) {
+        FeedImpl(Newsgroup newsgroup, Peer peer) {
+            this.newsgroup = newsgroup;
             this.peer = peer;
         }
 
@@ -464,12 +579,12 @@ public class MockPersistenceService implements PersistenceService {
         }
 
         @Override
-        public Date getLastSyncTime() {
+        public LocalDateTime getLastSyncTime() {
             return lastSyncTime;
         }
 
         @Override
-        public void setLastSyncTime(Date time) {
+        public void setLastSyncTime(LocalDateTime time) {
             this.lastSyncTime = time;
         }
 
@@ -479,28 +594,28 @@ public class MockPersistenceService implements PersistenceService {
         }
 
         @Override
-        public Peer GetPeer() {
+        public Newsgroup getNewsgroup() {
+            return newsgroup;
+        }
+
+        @Override
+        public Peer getPeer() {
             return peer;
         }
     }
 
-    private static class PeerImpl implements Peer {
-        private final int pk;
-        private final String label;
+    private static class PeerImpl implements Peer, Serializable {
+        @Serial
+        private static final long serialVersionUID = 1L;
+        private String label;
         private final String address;
         private boolean disabled;
-        private Date listLastFetched;
+        private LocalDateTime listLastFetched;
 
-        PeerImpl(int pk, String label, String address) {
-            this.pk = pk;
+        PeerImpl(String label, String address) {
             this.label = label;
             this.address = address;
             this.disabled = false;
-        }
-
-        @Override
-        public int getPk() {
-            return pk;
         }
 
         @Override
@@ -514,6 +629,9 @@ public class MockPersistenceService implements PersistenceService {
         }
 
         @Override
+        public void setLabel(String label) { this.label = label; }
+
+        @Override
         public boolean getDisabledStatus() {
             return disabled;
         }
@@ -524,13 +642,18 @@ public class MockPersistenceService implements PersistenceService {
         }
 
         @Override
-        public Date getListLastFetched() {
+        public LocalDateTime getListLastFetched() {
             return listLastFetched;
         }
 
         @Override
-        public void setListLastFetched(Date lastFetched) {
+        public void setListLastFetched(LocalDateTime lastFetched) {
             this.listLastFetched = lastFetched;
+        }
+
+        @Override
+        public String getPrincipal() {
+            return getAddress();
         }
     }
 }

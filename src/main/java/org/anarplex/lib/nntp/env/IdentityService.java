@@ -7,18 +7,19 @@ import java.util.Set;
 
 public interface IdentityService extends AutoCloseable {
 
+    public interface Subject {
+        String getPrincipal();
+    }
+
     /**
      * Authenticate authenticates the supplied identity using the supplied credentials and returns a token for
      * later Authentication and Authorization tests.  A valid token is never 0.
-     * @param identity
-     * @param credentials
      * @return a valid token or nil if authentication fails
      */
-    Long authenticate(String identity, String credentials);
+    Long authenticate(Subject subject, String credentials);
 
     /**
      * IsValid returns true if the supplied authenticationToken is still valid.
-     * @param token
      * @return true if the supplied authenticationToken is still valid, false otherwise.
      */
     boolean isValid(long token);
@@ -27,8 +28,6 @@ public interface IdentityService extends AutoCloseable {
      * AuthorizedToPost determines whether the entity identified (and authenticated previously) by the supplied token is
      * allowed to Post to the supplied Newsgroup.
      * Precondition: token must be valid. i.e. (isValid(token) == true)
-     * @param token
-     * @param newsgroup
      * @return true if the entity identified by the supplied token is authorized to Post to the supplied Newsgroup, false otherwise.
      */
     boolean authorizedToPost(long token, PersistenceService.Newsgroup newsgroup);
@@ -44,7 +43,6 @@ public interface IdentityService extends AutoCloseable {
 
     /**
      * CreateMessageID creates a Message-ID conforming to RFC-5536 Section 3.1.3
-     * @param articleHeaders
      * @return a Message-ID conforming to RFC-5536 Section 3.1.3
      */
     Specification.MessageId createMessageID(Map<String, Set<String>> articleHeaders);

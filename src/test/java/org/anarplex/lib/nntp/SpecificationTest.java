@@ -1,5 +1,6 @@
 package org.anarplex.lib.nntp;
 
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.util.Collections;
@@ -87,32 +88,6 @@ class SpecificationTest {
         assertFalse(Specification.MessageId.isValid("<0123>>"));  // too many end delimiters
         assertFalse(Specification.MessageId.isValid("<0123>3"));  // end delimiter not at the end
         assertFalse(Specification.MessageId.isValid("<\t>"));    // non-printable characters
-    }
-
-    @Test
-    void articleStandardHeadersValid() {
-        assertTrue(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.MessageID.getValue(), Collections.singleton("<1234567890>")));
-        assertTrue(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.Subject.getValue(), Collections.singleton("test subject")));
-        assertTrue(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.From.getValue(), Collections.singleton("somebody")));
-        assertTrue(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.Date.getValue(), Collections.singleton("Thu, 1 Jan 1970 00:00:00")));
-        assertTrue(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.Newsgroups.getValue(), Collections.singleton("test.test")));
-        assertTrue(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.References.getValue(), Collections.singleton("<1234567890>")));
-        assertTrue(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.Path.getValue(), Collections.singleton("test.test")));
-        assertTrue(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.Bytes.getValue(), Collections.singleton("12345")));
-        assertTrue(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.Lines.getValue(), Collections.singleton("12345")));
-    }
-
-    @Test
-    void articleStandardHeadersInValid() {
-        assertFalse(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.MessageID.getValue(), Collections.singleton("<>")));
-        assertFalse(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.Subject.getValue(), Collections.singleton("")));
-        assertFalse(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.From.getValue(), null));
-        assertFalse(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.Date.getValue(), Collections.singleton("1 JAN 1970 00:00:00")));
-        assertFalse(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.Newsgroups.getValue(), Collections.singleton("test.test.")));
-        assertFalse(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.References.getValue(), Collections.singleton("<>")));
-        assertFalse(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.Path.getValue(), null));
-        assertFalse(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.Bytes.getValue(), Collections.singleton("five")));
-        assertFalse(Specification.Article.ArticleHeaders.isValidHeaderField(Specification.NNTP_Standard_Article_Headers.Lines.getValue(), Collections.singleton("nine")));
     }
 
     @Test

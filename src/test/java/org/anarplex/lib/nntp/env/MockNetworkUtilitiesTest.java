@@ -5,22 +5,23 @@ import org.junit.jupiter.api.Test;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.util.Date;
+import java.time.LocalDateTime;
 import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class MockNetworkUtilsTest {
+class MockNetworkUtilitiesTest {
 
     @Test
     void testConnectToPeer() throws IOException, InterruptedException {
-        MockNetworkUtils networkUtils = new MockNetworkUtils();
         Properties props = new Properties();
         props.setProperty("host", "localhost");
         props.setProperty("port", "3119");
 
+        MockNetworkUtilities networkUtils = MockNetworkUtilities.getInstance(props);
+
         // start server
-        NetworkUtils.ServiceManager serviceManager = networkUtils.registerService(newConnection -> {
+        NetworkUtilities.ServiceManager serviceManager = networkUtils.registerService(newConnection -> {
             try (
                     PersistenceService persistenceService = new MockPersistenceService();
                     IdentityService identityService = new MockIdentityService();
@@ -41,16 +42,17 @@ class MockNetworkUtilsTest {
             } catch (Exception e) {
                 throw new RuntimeException(e);
             } finally {
-                newConnection.close();
+                newConnection.closeConnection();
             }
-        }, props);
+        });
         serviceManager.start();
 
         // connect client to server
         PersistenceService.Peer peer = new PersistenceService.Peer() {
+
             @Override
-            public int getPk() {
-                return 0;
+            public String getPrincipal() {
+                return getAddress();
             }
 
             @Override
@@ -64,6 +66,10 @@ class MockNetworkUtilsTest {
             }
 
             @Override
+            public void setLabel(String label) {
+            }
+
+            @Override
             public boolean getDisabledStatus() {
                 return false;
             }
@@ -73,36 +79,36 @@ class MockNetworkUtilsTest {
             }
 
             @Override
-            public Date getListLastFetched() {
+            public LocalDateTime getListLastFetched() {
                 return null;
             }
 
             @Override
-            public void setListLastFetched(Date lastFetched) {
+            public void setListLastFetched(LocalDateTime lastFetched) {
             }
         };
-        Thread.sleep(2000); // wait for server to start
-        NetworkUtils.ProtocolStreams clientSideStreams = networkUtils.connectToPeer(peer, props);
+        Thread.sleep(2000); // wait for the server to start
+        NetworkUtilities.ProtocolStreams clientSideStreams = networkUtils.connectToPeer(peer);
 
         // expect to find a welcome message
-        BufferedReader reader = new BufferedReader(new InputStreamReader(clientSideStreams.getInputStream()));
+        BufferedReader reader = clientSideStreams.getReader();
         String initialResponse = new String(reader.readLine().getBytes(StandardCharsets.UTF_8));
         assertTrue(initialResponse.startsWith("200"));
 
         // send the QUIT command
-        BufferedOutputStream sw = new BufferedOutputStream(clientSideStreams.getOutputStream());
-        sw.write("QUIT\r\n".getBytes(StandardCharsets.UTF_8));
+        PrintWriter sw = clientSideStreams.getWriter();
+        sw.print("QUIT\r\n");
         sw.flush();
         // and check response
-        String finalResponse = new String(reader.readLine().getBytes(StandardCharsets.UTF_8));
+        String finalResponse = reader.readLine();
         assertTrue(finalResponse.startsWith("205"));
 
-        clientSideStreams.close();
+        clientSideStreams.closeConnection();
         serviceManager.terminate();
     }
 
     @Test
     void testDefaults() {
-        assertEquals("3119", MockNetworkUtils.defaults.getProperty("port"));
+        assertEquals("3119", MockNetworkUtilities.networkEnv.getProperty("port"));
     }
 }

@@ -2,8 +2,10 @@ package org.anarplex.lib.nntp;
 
 import org.apache.commons.lang3.StringUtils;
 
-import java.io.Reader;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class Specification {
 
@@ -11,28 +13,165 @@ public class Specification {
         super();
     }
 
+    /*
+     * NNTP Commands according to RFC3977
+     * CAPABILITIES: Used to query the server for its supported features and capabilities.
+     * QUIT: Terminates the session with the server.
+     * ARTICLE: Requests an article by message ID or article number.
+     * BODY: Requests the body of an article by message ID or article number.
+     * HEAD: Requests the header of an article by message ID or article number.
+     * HELP: Requests help information from the server.
+     * LIST: Retrieves various lists such as active newsgroups, overview formats, headers, and more.
+     * MODE READER: Switches the server to reader mode, enabling access to reading commands.
+     * POST: Sends an article to the server for posting.
+     * IHAVE: Offers an article to a server, used primarily in peer-to-peer news distribution.
+     * GROUP: Selects a newsgroup for reading or posting.
+     * STAT: Requests information about an article by message ID or article number.
+     * DATE: Requests the current date and time from the server.
+     * NEWNEWS: Requests a list of new articles in specified newsgroups since a given date.
+     * OVER: Requests overview information for articles in a newsgroup.
+     * HDR: Requests specific header fields for articles in a newsgroup.
+     * XHDR: A variant of HDR that allows for more flexible header retrieval.
+     * XOVER: A variant of OVER that provides overview data in a different format.
+     * XGTITLE: Retrieves the title of a newsgroup.
+     * XPOST: A variant of POST used for posting articles to a specific newsgroup.
+     * XHDR: A command for retrieving specific header fields from articles.
+     */
     public enum NNTP_Request_Commands {
-        ARTICLE,
-        BODY,
-        CAPABILITIES,
-        DATE,
-        GROUP,
-        HEAD,
-        HELP,
-        IHAVE,
-        LAST,
-        LIST,
-        LISTGROUP,
-        MODE,
-        NEWGROUPS,
-        NEWNEWS,
-        NEXT,
-        OVERVIEW,
-        POST,
-        QUIT,
-        STAT,
-        XOVER,
+        ARTICLE("ARTICLE"),
+        BODY("BODY"),
+        CAPABILITIES("CAPABILITIES"),
+        DATE("DATE"),
+        GROUP("GROUP"),
+        HEAD("HEAD"),
+        HELP("HELP"),
+        IHAVE("IHAVE"),
+        LAST("LAST"),
+        LIST("LIST"),
+        LIST_ACTIVE("LIST ACTIVE"),
+        LIST_ACTIVE_TIMES("LIST ACTIVE.TIMES"),
+        LIST_DISTRIBUTION_PATS("LIST DISTRIBUTION.PATS"),
+        LIST_NEWSGROUPS("LIST NEWSGROUPS"),
+        LIST_OVERVIEW_FMT("LIST OVERVIEW.FMT"),
+        HDR("HDR"),
+        LIST_HEADERS("LIST HEADERS"),   // distinct from LIST because it belongs to a different capability - HDR
+        LIST_GROUP("LISTGROUP"),
+        MODE_READER("MODE READER"),
+        NEW_GROUPS("NEWGROUPS"),
+        NEW_NEWS("NEWNEWS"),
+        NEXT("NEXT"),
+        OVERVIEW("OVER"),
+        POST("POST"),
+        QUIT("QUIT"),
+        STAT("STAT"),
+        XOVER("XOVER");
+
+        NNTP_Request_Commands(String value) { this.value = normalize(value); }
+
+        /**
+         * Return the Command whose value matches the supplied value, or null if no match is found.
+         * The algorithm chooses the Command whose value is the longest match. e.g., LIST.ACTIVE.TIME over LIST ACTIVE
+         */
+        static public NNTP_Request_Commands getCommand(String value) {
+            // normalize input value
+            String normalizedValue = normalize(value);
+            for (NNTP_Request_Commands command : sortedValues) {
+                if (normalizedValue.startsWith(command.getValue())) {
+                    return command;
+                }
+            }
+            return null;
+        }
+
+        public String getValue() { return value; }
+        public String toString() { return getValue(); }
+
+        /**
+         * Normalize the supplied string to upper-case and trims all leading, trailing, and in-between whitespace to
+         * one space character.
+         * For comparison purposes, values need to be in normal form.
+         */
+        private static String normalize(String value) {
+            String[] words = value.split("\\s+"); // split string on whitespace boundaries
+            return String.join(" ", words).toUpperCase();  // rejoin with one space character between words and convert to uppercase
+        }
+
+        // calculate the sorted values array once, at class load time, as it never changes during program execution
+        private static final NNTP_Request_Commands[] sortedValues;
+        static {
+            sortedValues = Arrays.stream(NNTP_Request_Commands.values())
+                    .sorted(Comparator.comparingInt((NNTP_Request_Commands c) -> c.getValue().length()).reversed())
+                    .toArray(NNTP_Request_Commands[]::new);
+        }
+
+        private final String value;
     }
+
+    /**
+     * NNTP Capabilities and their required Commands according to RFC-3977.
+     * Note that the commands: CAPABILITIES, HEAD, HELP, QUIT, and STAT are all mandatory and thus don't have a
+     * corresponding (explicit) capability.
+     * The string value of each capability is its formal expression, according to RFC-3977.  The set of NNTP Commands
+     * for each capability are those commands that MUST be available to the client in order for the server to claim
+     * current support for that capability.
+     */
+    public enum NNTP_Server_Capabilities {
+        _MANDATORY(null, // not an explicit capability, but a conceptual one
+                Set.of(NNTP_Request_Commands.CAPABILITIES,
+                        NNTP_Request_Commands.HEAD,
+                        NNTP_Request_Commands.HELP,
+                        NNTP_Request_Commands.QUIT,
+                        NNTP_Request_Commands.STAT)),
+        HDR("HDR",
+                Set.of(NNTP_Request_Commands.HDR,
+                        NNTP_Request_Commands.LIST_HEADERS)),
+        I_HAVE("IHAVE",
+                Set.of(NNTP_Request_Commands.IHAVE)),
+        LIST("LIST",
+                Set.of(NNTP_Request_Commands.LIST,
+                        NNTP_Request_Commands.LIST_ACTIVE,
+                        NNTP_Request_Commands.LIST_ACTIVE_TIMES,
+                        NNTP_Request_Commands.LIST_DISTRIBUTION_PATS,
+                        NNTP_Request_Commands.LIST_NEWSGROUPS)),
+        MODE_READER("MODE-READER",
+                Set.of(NNTP_Request_Commands.MODE_READER)),
+        NEW_NEWS("NEWNEWS",
+                Set.of(NNTP_Request_Commands.NEW_NEWS)),
+        OVER("OVER",
+                Set.of(NNTP_Request_Commands.OVERVIEW,
+                        NNTP_Request_Commands.XOVER,
+                        NNTP_Request_Commands.LIST_OVERVIEW_FMT)),
+        POST("POST",
+                Set.of(NNTP_Request_Commands.POST)),
+        READER("READER",
+                Set.of(NNTP_Request_Commands.ARTICLE,
+                        NNTP_Request_Commands.BODY,
+                        NNTP_Request_Commands.DATE,
+                        NNTP_Request_Commands.GROUP,
+                        NNTP_Request_Commands.LAST,
+                        NNTP_Request_Commands.LIST_GROUP,
+                        NNTP_Request_Commands.LIST_NEWSGROUPS,
+                        NNTP_Request_Commands.NEW_GROUPS,
+                        NNTP_Request_Commands.NEXT));
+
+        private final String value;
+        private final Set<NNTP_Request_Commands> requisiteCommands;
+        NNTP_Server_Capabilities(String value, Set<NNTP_Request_Commands> requisiteCommands) { this.value = value; this.requisiteCommands = requisiteCommands; }
+        public String getValue() { return value; }
+        public String toString() { return getValue(); }
+        public static boolean contains(String v) { return EnumSet.allOf(NNTP_Server_Capabilities.class).stream().anyMatch(e -> e.getValue().equalsIgnoreCase(v)); }
+        /**
+         * Returns true if all the commands associated with this capability are found in the supplied set of commands
+         */
+        public boolean isSufficientSet(Set<NNTP_Request_Commands> commandSet) { return commandSet.containsAll(this.requisiteCommands); }
+
+        /**
+         * Returns true if the supplied dispatcherCommand is required by this capability.
+         */
+        public boolean isRequiredCommand(NNTP_Request_Commands dispatcherCommand) { return this.requisiteCommands.contains(dispatcherCommand); }
+    }
+
+    public static final String DOT_LINE = ".\r\n";
 
     public enum NNTP_Response_Code {
         Code_100(100), // Generated by: HELP.  Meaning: help text follows.
@@ -94,25 +233,32 @@ public class Specification {
         public String toString() {
             return Integer.toString(value);
         }
+
+        /**
+         * Determine if the supplied response line has specified the supplied response code.
+         */
+        public static boolean isResponseCode(String responseLine, NNTP_Response_Code code) {
+            if (responseLine != null && responseLine.length() > 3) {
+                return responseLine.substring(0, 3).equals(code.toString());
+            } else {
+                return false;
+            }
+        }
     }
 
 
-    public enum NNTP_Response_Commands {
-
-    }
 
     public enum NNTP_Standard_Article_Headers {
-        // mandatory headers for every article
-        MessageID("Message-Id"),
-        Date("Date"),
-        From("From"),
-        Newsgroups("Newsgroups"),
-        Path("Path"),
+        // mandatory headers for every article, in the order prescribed by RFC-3977 Sec 8.3 - Over Command.
         Subject("Subject"),
-        // optional standardized headers for every article
+        From("From"),
+        Date("Date"),
+        MessageID("Message-Id"),
         References("References"),
         Bytes(":bytes"),
-        Lines(":lines");
+        Lines(":lines"),
+        Newsgroups("Newsgroups"),
+        Path("Path");
 
         private final String value;
 
@@ -128,8 +274,8 @@ public class Specification {
             return value;
         }
 
-        public boolean isOptional() {
-            return this == NNTP_Standard_Article_Headers.Bytes || this == NNTP_Standard_Article_Headers.Lines || this == NNTP_Standard_Article_Headers.References;
+        public boolean isMandatory() {
+            return this != NNTP_Standard_Article_Headers.Bytes && this != NNTP_Standard_Article_Headers.Lines && this != NNTP_Standard_Article_Headers.References;
         }
 
         public static boolean contains(String v) {
@@ -139,12 +285,9 @@ public class Specification {
 
     /**
      * Newsgroup name.
-     *
      * All newsgroup names are case-insensitive and are converted to lower case.
-     *
-     * @param
      */
-    public static class NewsgroupName {
+    public static class NewsgroupName implements Serializable {
         private final static int NewsgroupNameMaxLen = 1024;  // (practical limit.  not from spec)
         private final String name;
 
@@ -179,8 +322,21 @@ public class Specification {
             }
         }
 
+        /**
+         * Always returns lowercase variant of the name.
+         */
         public String getValue() {
             return name;
+        }
+
+        /**
+         * isLocal returns true if the newsgroup name is a local newsgroup name: i.e. the compound name begins
+         * with "local."
+         * NOTE.  This IS NOT part of the RFC-3977 specification.  It is used to create newsgroups whose articles will
+         * never be shared with other NNTP Peers, although NNTP Clients will be allowed access.
+         */
+        public static boolean isLocal(NewsgroupName name) {
+            return (name != null && name.getValue().startsWith("local."));
         }
 
         @Override
@@ -204,6 +360,8 @@ public class Specification {
                     && !name.contains("..")                     // does not contain two consecutive dots
                     && name.matches("^[a-zA-Z0-9\\-+_.]+$");
         }
+
+
     }
 
     public enum PostingMode {
@@ -233,9 +391,14 @@ public class Specification {
         }
     }
 
-    public static class MessageId {
+    public static class MessageId implements Comparable<MessageId>, Serializable {
         private final static int MessageIdMaxLen = 250;
         private final String messageId;
+
+        @Override
+        public int compareTo(MessageId o) {
+            return this.messageId.compareTo(o.messageId);
+        }
 
         static public class InvalidMessageIdException extends Exception {
             public InvalidMessageIdException(String message) {
@@ -271,8 +434,6 @@ public class Specification {
             return messageId.hashCode();
         }
 
-
-
         public static boolean isValid(String id) {
             return id != null &&
                     id.length() >= 3 &&
@@ -283,7 +444,7 @@ public class Specification {
         }
     }
 
-    public static class ArticleNumber {
+    public static class ArticleNumber implements Serializable {
         final int number;
 
         static public class InvalidArticleNumberException extends Exception {
@@ -358,22 +519,70 @@ public class Specification {
         }
     }
 
-    public static abstract class Article {
+    public static class Article implements Serializable {
+        protected final MessageId messageId;
+        protected final ArticleHeaders headers;
+        protected final String body;
 
-        public abstract Reader getBody();
-        public abstract ArticleHeaders getAllHeaders();
+        protected Article(MessageId messageId, ArticleHeaders headers, String body) {
+            this.messageId = messageId;
+            this.headers = headers;
+            this.body = body;
+
+            if (headers == null || body == null) {
+                throw new IllegalArgumentException("Article must have headers and body");
+            }
+
+            // add :lines header field if not present
+            headers.headerFields.putIfAbsent(NNTP_Standard_Article_Headers.Lines.getValue(),
+                    Set.of(String.valueOf(body.lines().count())));
+
+            // add :bytes header field if not present
+            headers.headerFields.putIfAbsent(Specification.NNTP_Standard_Article_Headers.Bytes.getValue(),
+                    Set.of(String.valueOf(body.getBytes(StandardCharsets.UTF_8).length)));
+        }
+
+        public ArticleHeaders getAllHeaders() {
+            return headers;
+        }
+
+        /**
+         * Returns the body in a stream suitable for sending directly to the client.  This is the same format as
+         * was read-in from a POST or IHAVE command.
+         */
+        public String getBody() {
+            return body;
+        }
+
+        /**
+         * When the stream-representation of the Article is invalid.
+         */
+        static public class InvalidArticleFormatException extends Exception {
+            public InvalidArticleFormatException(String message) {
+                super(message);
+            }
+        }
 
         public static boolean isInvalidBody(String body) {
             return body == null || body.isEmpty();
         }
 
-        private MessageId getMessageId() {
-            try {
-                return new MessageId(
-                        getAllHeaders().getHeaderValue(NNTP_Standard_Article_Headers.MessageID.getValue()).iterator().next());
-            } catch (MessageId.InvalidMessageIdException e) {
-                throw new RuntimeException(e);
-            }
+        public MessageId getMessageId() {
+                return messageId;
+        }
+
+        /**
+         * Follows the XOVER/OVER prescription for ordering of header fields.
+         */
+        public void writeTo(PrintWriter writer) throws IOException {
+            // write all header fields
+            getAllHeaders().writeTo(writer);
+            // write a separator line
+            writer.write("\r\n");
+            // write the body
+            writer.write(getBody());
+            // write the end of the article - a single dot-line
+            writer.write(".\r\n");
         }
 
         @Override
@@ -382,12 +591,48 @@ public class Specification {
         }
 
         @Override
-        public boolean equals(Object obj) {
-            return getMessageId().equals(obj);
+        public boolean equals(Object o) {
+            if (!(o instanceof Article article)) return false;
+            return getMessageId().equals(article.getMessageId());
         }
 
-        public static class ArticleHeaders {
+        public static class ArticleHeaders implements Serializable {
             private final Map<String, Set<String>> headerFields;
+
+            /**
+             * Writes the headers to the supplied PrintWriter in RFC 5322 / RFC 3977 format.
+             * Each header is followed by CRLF.
+             */
+            public void writeTo(PrintWriter writer) {
+                // first, write out the standard headers is their enum order
+                for (NNTP_Standard_Article_Headers header : NNTP_Standard_Article_Headers.values()) {
+                    Set<String> values = headerFields.get(header.getValue());
+                    if (values != null) {
+                        if (!values.isEmpty()) {
+                            // RFC 3977/5536: Newsgroups header is a single line with comma-separated values
+                            if (NNTP_Standard_Article_Headers.Newsgroups.getValue().equalsIgnoreCase(header.getValue())) {
+                                writer.print(header + ": " + String.join(",", values) + "\r\n");
+                            } else {
+                                // For other headers, output each value on a new line
+                                values.forEach(value -> writer.print(header + ": " + value + "\r\n"));
+                            }
+                        } else {
+                            writer.print(header + ": \r\n");
+                        }
+                    }
+                }
+                // now write out the custom headers in alphabetical order
+                for (Map.Entry<String, Set<String>> headerField : headerFields.entrySet()) {
+                    if (headerField.getValue().isEmpty()) {
+                        if (!NNTP_Standard_Article_Headers.contains(headerField.getKey())) {
+                            Set<String> values = headerField.getValue();
+                            values.forEach(value -> writer.print(headerField.getKey() + ": " + value + "\r\n"));
+                        } else {
+                            writer.print(headerField.getKey() + ": \r\n");
+                        }
+                    }
+                }
+            }
 
             public static class InvalidArticleHeaderException extends Exception {
                 public InvalidArticleHeaderException(String message) {
@@ -398,7 +643,18 @@ public class Specification {
             public ArticleHeaders(Map<String, Set<String>> headerFields) throws InvalidArticleHeaderException {
                 Map<String, Set<String>> caseInsensitiveHeaders = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
                 caseInsensitiveHeaders.putAll(headerFields);
-            this.headerFields = validateHeaderFields(caseInsensitiveHeaders);
+                this.headerFields = validateHeaderFields(caseInsensitiveHeaders);
+            }
+
+            /**
+             * Return a deep-copy of the header fields
+             */
+            public Map<String, Set<String>> getHeaderFields() {
+                Map<String, Set<String>> deepCopy = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+                for (Map.Entry<String, Set<String>> entry : headerFields.entrySet()) {
+                    deepCopy.put(entry.getKey(), new HashSet<>(entry.getValue()));
+                }
+                return deepCopy;
             }
 
             public Iterable<? extends Map.Entry<String, Set<String>>> entrySet() {
@@ -409,139 +665,172 @@ public class Specification {
                 return (headerFields.containsKey(headerName) ? Set.copyOf(headerFields.get(headerName)) : null);
             }
 
+            public MessageId getMessageId() {
+                Set<String> messageIdHeaders = headerFields.get(Specification.NNTP_Standard_Article_Headers.MessageID.getValue());
+                try {
+                    return new MessageId(messageIdHeaders.iterator().next());
+                } catch (MessageId.InvalidMessageIdException e) {
+                    // not possible.  headerFields has already been validated for MessageId
+                    throw new RuntimeException(e);
+                }
+            }
+
             /**
-             * Check if the header fields are valid.  A valid header field set MUST contain all of the Standard Article Headers,
-             * and those fields MUST be valid according to the various methods defined below.  As for non-standard headers,
+             * Gets the set of Newsgroups mentioned in this article's header: Newsgroups
+             */
+            public Set<NewsgroupName> getNewsgroups() {
+                String newsgroupsHeader = Specification.NNTP_Standard_Article_Headers.Newsgroups.getValue();
+                Set<String> groups = headerFields.get(newsgroupsHeader);
+                return groups.stream()
+                        .map(name -> {
+                            try {
+                                return new NewsgroupName(name);
+                            } catch (NewsgroupName.InvalidNewsgroupNameException e) {
+                                // This shouldn't happen as headerFields are validated on construction
+                                throw new RuntimeException(e);
+                            }
+                        })
+                        .collect(Collectors.toSet());
+            }
+
+            /**
+             * Check if the header fields are valid.  A valid header field set MUST contain all the Standard Article Headers,
+             * and those fields MUST be valid, according to the various methods defined below.  As for non-standard headers,
              * those must conform to basic syntax and formatting rules (see also below).
              * This method will return a normalised version of the header fields. i.e. one where a multivalued
              * Newgroup header value (such as "group1, group2") is converted to a set of single valued entries.
              *
-             * @param headerFields
-             * @return normalised header fields where each value is properly normalised according to the field type
+             * @return normalized header fields where each value is properly normalised according to the field type
              */
             public static Map<String, Set<String>> validateHeaderFields(Map<String, Set<String>> headerFields)
                 throws InvalidArticleHeaderException {
+
                 if (headerFields != null) {
-                    EnumSet<NNTP_Standard_Article_Headers> stdArticlesHeaderSet = EnumSet.allOf(NNTP_Standard_Article_Headers.class);
-
-                    for (NNTP_Standard_Article_Headers header : stdArticlesHeaderSet) {
-
-                        if (!header.isOptional() && !headerFields.containsKey(header.getValue())) {
-                            throw new InvalidArticleHeaderException("Missing required header field: " + header.getValue());
+                    // check that all required headers are present
+                    for (NNTP_Standard_Article_Headers standardizedHeader : EnumSet.allOf(NNTP_Standard_Article_Headers.class)) {
+                        if (standardizedHeader.isMandatory() && !headerFields.containsKey(standardizedHeader.getValue())) {
+                            throw new InvalidArticleHeaderException("Missing required header field: " + standardizedHeader.getValue());
                         }
                     }
 
-                    // break multivalued header fields into sets of single values
-                    for (Map.Entry<String, Set<String>> entry : headerFields.entrySet()) {
-                        if (entry.getKey().equals(NNTP_Standard_Article_Headers.Newsgroups.getValue())) {
-                            // newsgroups is a special case because it is a multivalued header field that must be a set of newsgroup names
-                            Set<String> newsgroups = new HashSet<>();
-                            for (String v : entry.getValue()) {
-                                String[] namesList = v.split(",");
-                                newsgroups.addAll(Arrays.asList(namesList));
-                                headerFields.put(entry.getKey(), newsgroups);
-                            }
-                        }
-                    }
+                    // The result set is each header with its field(s) split up into a set of individual values.
+                    Map<String, Set<String>> result = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
 
                     for (Map.Entry<String, Set<String>> e : headerFields.entrySet()) {
-                        if (!isValidHeaderField(e.getKey(), e.getValue())) {
-                            throw new InvalidArticleHeaderException("Invalid header field: " + e.getKey());
+                        String headerName = e.getKey();
+
+                        if (isValidHeaderName(headerName)) {
+
+                            for (String headerValue : e.getValue()) {
+
+                                // check the specific cases of the standardized headers.
+                                if (headerName.equalsIgnoreCase(NNTP_Standard_Article_Headers.MessageID.getValue())) {
+                                    if (result.containsKey(headerName)) {
+                                        throw new InvalidArticleHeaderException("Duplicate header field: " + headerName);
+                                    } else if (!MessageId.isValid(headerValue)) {
+                                        throw new InvalidArticleHeaderException("Invalid Message-ID header value: " + headerValue);
+                                    } else {
+                                        result.put(headerName, Set.of(headerValue));
+                                    }
+                                } else if (headerName.equalsIgnoreCase(NNTP_Standard_Article_Headers.Newsgroups.getValue())) {
+                                    for (String v : headerValue.split(",")) {   // split newsgroup field parts on comma
+                                        if (!NewsgroupName.isValid(v)) {
+                                            throw new InvalidArticleHeaderException("Invalid newsgroup name: " + v);
+                                        } else {
+                                            // add to the result set
+                                            result.computeIfAbsent(headerName, k -> new HashSet<>()).add(v);
+                                        }
+                                    }
+                                } else if (headerName.equalsIgnoreCase(NNTP_Standard_Article_Headers.Subject.getValue())) {
+                                    if (result.containsKey(headerName)) {
+                                        throw new InvalidArticleHeaderException("Duplicate header field: " + headerName);
+                                    } else if (!isValidUnstructuredValue(headerValue)) {
+                                        throw new InvalidArticleHeaderException("Invalid Subject header value: " + headerValue);
+                                    } else {
+                                        result.put(headerName, Set.of(headerValue));
+                                    }
+                                } else if (headerName.equalsIgnoreCase(NNTP_Standard_Article_Headers.Date.getValue())) {
+                                    if (result.containsKey(headerName)) {
+                                        throw new InvalidArticleHeaderException("Duplicate header field: " + headerName);
+                                    } else if (!isValidDate(headerValue)) {
+                                        throw new InvalidArticleHeaderException("Invalid Date header value: " + headerValue);
+                                    } else {
+                                        result.put(headerName, Set.of(headerValue));
+                                    }
+                                } else if (headerName.equalsIgnoreCase(NNTP_Standard_Article_Headers.From.getValue())) {
+                                    if (result.containsKey(NNTP_Standard_Article_Headers.From.getValue())) {
+                                        throw new InvalidArticleHeaderException("Duplicate header field: " + headerName);
+                                    } else if (!isValidUnstructuredValue(headerValue)) {
+                                        throw new InvalidArticleHeaderException("Invalid From header value: " + headerValue);
+                                    } else {
+                                        result.put(headerName, Set.of(headerValue));
+                                    }
+                                } else if (headerName.equalsIgnoreCase(NNTP_Standard_Article_Headers.References.getValue())) {
+                                    if (!isValidHeaderName(headerValue)) {
+                                        throw new InvalidArticleHeaderException("Invalid References header value: " + headerValue);
+                                    } else {
+                                        result.computeIfAbsent(headerName, k -> new HashSet<>()).add(headerValue);
+                                    }
+                                } else if (headerName.equalsIgnoreCase(NNTP_Standard_Article_Headers.Path.getValue())) {
+                                    if (result.containsKey(NNTP_Standard_Article_Headers.Path.getValue())) {
+                                        throw new InvalidArticleHeaderException("Duplicate header field: " + headerName);
+                                    } else if (!isValidUnstructuredValue(headerValue)) {
+                                        throw new InvalidArticleHeaderException("Invalid Path header value: " + headerValue);
+                                    } else {
+                                        result.put(headerName, Set.of(headerValue));
+                                    }
+                                } else if (headerName.equalsIgnoreCase(NNTP_Standard_Article_Headers.Bytes.getValue())) {
+                                    if (result.containsKey(NNTP_Standard_Article_Headers.Bytes.getValue())) {
+                                        throw new InvalidArticleHeaderException("Duplicate header field: " + headerName);
+                                    } else {
+                                        try {
+                                            if (Integer.parseInt(headerValue) < 0) {   // Bytes header value must be a valid positive number
+                                                throw new InvalidArticleHeaderException("Invalid Bytes header value: " + headerValue);
+                                            } else {
+                                                result.put(headerName, Set.of(headerValue));
+                                            }
+                                        } catch (NumberFormatException _) {
+                                            throw new InvalidArticleHeaderException("Invalid Bytes header value: " + headerValue);
+                                        }
+                                    }
+                                } else if (headerName.equalsIgnoreCase(NNTP_Standard_Article_Headers.Lines.getValue())) {
+                                    if (result.containsKey(NNTP_Standard_Article_Headers.Lines.getValue())) {
+                                        throw new InvalidArticleHeaderException("Duplicate header field: " + headerName);
+                                    } else {
+                                        try {
+                                            if (Integer.parseInt(headerValue) < 0) {   // Lines header value must be a valid positive number
+                                                throw new InvalidArticleHeaderException("Invalid Lines header value: " + headerValue);
+                                            } else {
+                                                result.put(headerName, Set.of(headerValue));
+                                            }
+                                        } catch (NumberFormatException _) {
+                                            throw new InvalidArticleHeaderException("Invalid Lines header value: " + headerValue);
+                                        }
+                                    }
+                                } else {    // not a standard header name
+                                    // just check that the header value is ok
+                                    if (!isValidHeaderValue(headerValue)) {
+                                        throw new InvalidArticleHeaderException("Invalid header value: " + headerValue);
+                                    } else {
+                                        result.computeIfAbsent(headerName, k -> new HashSet<>()).add(headerValue);
+                                    }
+                                }
+                            }
+                        } else {
+                            throw new InvalidArticleHeaderException("Invalid header name: " + headerName);
                         }
                     }
+                    return result;
                 }
-                return headerFields;
+                throw new InvalidArticleHeaderException("no Header fields present");
             }
 
-            public static boolean isValidHeaderField(String name, Set<String> value) {
-                if (isValidHeaderName(name)) {
-                    if (value == null) {
-                        value = new HashSet<>();
-                    }
-                    // the form of the header name in general is valid.  Now check the specific cases
-                    // of the standardized headers.
-                    if (name.equalsIgnoreCase(NNTP_Standard_Article_Headers.MessageID.getValue())) {
-                        return value.size() == 1 && MessageId.isValid(value.iterator().next());
-                    } else if (name.equalsIgnoreCase(NNTP_Standard_Article_Headers.Newsgroups.getValue())) {
-                        for (String v : value) {
-                            if (!NewsgroupName.isValid(v)) {
-                                return false;
-                            }
-                        }
-                    } else if (name.equalsIgnoreCase(NNTP_Standard_Article_Headers.Subject.getValue())) {
-                        if (value.size() == 1) {
-                            // The Subject header value is not constrained.  It may contain any characters.
-                            return isValidUnstructuredValue(value.iterator().next());
-                        } else {
-                            return false;
-                        }
-                    } else if (name.equalsIgnoreCase(NNTP_Standard_Article_Headers.Date.getValue())) {
-                        if (value.size() == 1) {
-                            return isValidDate(value.iterator().next());
-                        } else {
-                            return false;
-                        }
-                    } else if (name.equalsIgnoreCase(NNTP_Standard_Article_Headers.From.getValue())) {
-                        if (value.size() == 1) { // The From header must be single-valued
-                            return isValidUnstructuredValue(value.iterator().next());
-                        } else {
-                            return false;
-                        }
-                    } else if (name.equalsIgnoreCase(NNTP_Standard_Article_Headers.References.getValue())) {
-                        if (value.size() == 1) {    // The References header must be single-valued
-                            return MessageId.isValid(value.iterator().next());
-                        } else {
-                            return false;
-                        }
-                    } else if (name.equalsIgnoreCase(NNTP_Standard_Article_Headers.Path.getValue())) {
-                        if (value.size() == 1) {    // The Path header must be single-valued
-                            return isValidPath(value.iterator().next());
-                        } else {
-                            return false;
-                        }
-                    } else if (name.equalsIgnoreCase(NNTP_Standard_Article_Headers.Bytes.getValue())) {
-                        if (value.size() == 1) {    // The Bytes header must be single-valued
-                            try {
-                                return Integer.parseInt(value.iterator().next()) > 0;   // Bytes header value must be a valid positive number
-                            } catch (NumberFormatException e) {
-                                return false;
-                            }
-                        } else {
-                            return false;
-                        }
-                    } else if (name.equalsIgnoreCase(NNTP_Standard_Article_Headers.Lines.getValue())) {
-                        if (value.size() == 1) {    // The Lines header must be single-valued
-                            try {
-                                return Integer.parseInt(value.iterator().next()) > 0;   // Lines header value must be a valid positive number
-                            } catch (NumberFormatException e) {
-                                return false;
-                            }
-                        } else {
-                            return false;
-                        }
-                    } else {    // not a standard header name
-                        // just check that the header value is ok
-                        for (String v : value) {
-                            if (!isValidHeaderValue(v)) {
-                                return false;
-                            }
-                        }
-                        return true;
-                    }
-                } else {
-                    // not a valid header name
-                    return false;
-                }
-                return true;
-            }
+
 
             /**
              * Check if the header name is valid.
              * <p>
              * Header names must consist of one or more printable US-ASCII characters, excluding the colon character.
-             *
-             * @param name
-             * @return
              */
             public static boolean isValidHeaderName(String name) {
                 return name != null                             // not null
@@ -569,9 +858,6 @@ public class Specification {
              * It must contain at least one non-whitespace character.
              * It may include folding (line breaks) using CRLF followed by whitespace (FWS), but this is typically used for long headers.
              * It excludes control characters except for whitespace used in folding.
-             *
-             * @param s
-             * @return
              */
             public static boolean isValidUnstructuredValue(String s) {
                 return s != null
@@ -583,9 +869,6 @@ public class Specification {
             /**
              * The Date header value must be in the format "Wdy, DD Mon YYYY HH:MM TIMEZONE" and while the use of "GMT" as a time zone is
              * deprecated, it is still widely accepted and must be supported by agents.
-             *
-             * @param date
-             * @return
              */
             public static boolean isValidDate(String date) {
                 return date != null
@@ -788,11 +1071,108 @@ public class Specification {
                 // For practical implementation and security, we'll be somewhat restrictive
                 // but allow common diagnostic strings like "not-for-mail"
                 // Pattern: printable ASCII characters and basic punctuation, no control characters
-                if (!component.matches("^[\\p{Print}\\p{L}\\p{N}._-]+$")) {
-                    return false;
-                }
+                return component.matches("^[\\p{Print}\\p{L}\\p{N}._-]+$");
+            }
+        }
+    }
 
-                return true;
+    /**
+     * A ProtoArticle is the raw article read in from a stream.
+     * It is not validated (e.g. it may be missing required header fields, etc).
+     * It is an internal representation of the streamed data alone, which may or may not be what we regard as a valid
+     * Article object.
+     * All header field names (map keys) are translated to lowercase.
+     * The body text can be empty but is never null.
+     */
+    public static class ProtoArticle {
+        private final Map<String, Set<String>> headersLowerCase;
+        private final String bodyText;
+
+        private ProtoArticle(Map<String, Set<String>> headersLowerCase, String bodyText) {
+            this.headersLowerCase = headersLowerCase;
+            this.bodyText = bodyText;
+        }
+
+        /**
+         * Reads from the stream until a single dot-line is encountered - signifying the end of the article.
+         */
+        static ProtoArticle readFrom(BufferedReader reader)
+                throws IOException, Specification.Article.InvalidArticleFormatException {
+
+            // read in lines until a single dot line is encountered
+            StringBuilder streamedText = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null  && !".".equals(line)) {
+                streamedText.append(line).append("\r\n");    // add back the \r\n that readLine() removes
+            }
+            String articleContent = streamedText.toString();
+
+            if (articleContent.isEmpty()) {
+                throw new Specification.Article.InvalidArticleFormatException("Invalid article format - no article content");
+            }
+
+            // Parse the article into headers and body
+            int headerBodySeparator = articleContent.indexOf("\r\n\r\n");   // empty line that separates headers from the body
+
+            if (headerBodySeparator == -1) {
+                // Invalid article format - no separator between headers and body
+                throw new Specification.Article.InvalidArticleFormatException("Invalid article format - no separator between headers and body");
+            }
+
+            String headersText = articleContent.substring(0, headerBodySeparator);
+            String bodyText = articleContent.substring(headerBodySeparator + 4);    // 4 == '\r\n\r\n'.length()'
+
+            // Validate the body text
+            if (Specification.Article.isInvalidBody(bodyText)) {
+                throw new Specification.Article.InvalidArticleFormatException("Invalid article format - invalid body");
+            }
+
+            // merge continuation lines back into one line
+            headersText = headersText.replaceAll("\r\n +|\t", " ");
+
+            // split headers into lines
+            String[] headerLines = headersText.split("\r\n");
+
+            // Parse headers, one line at a time
+            Map<String, Set<String>> headerMap = new HashMap<>();
+
+            for (String headerLine : headerLines) {
+                // remove leading and trailing whitespace
+                headerLine = headerLine.trim();
+
+                // ignore empty lines
+                if (headerLine.isEmpty()) continue;
+
+                // split the header line into name and value
+                int colonIndex = headerLine.indexOf(':');
+                if (colonIndex == -1) {
+                    throw new Specification.Article.InvalidArticleFormatException("Invalid article format - invalid header line: " + headerLine);
+                }
+                // all headers are converted to Lowercase for ease of comparison
+                String headerName = headerLine.substring(0, colonIndex).trim().toLowerCase();
+                String headerValue = headerLine.substring(colonIndex + 1).trim();
+
+                // add the header value to the map.  Even if null, the header key will always be associated with a Set of values (possibly an empty Set).
+                headerMap.computeIfAbsent(headerName, k -> new HashSet<>()).add(headerValue);
+            }
+
+            // return a record with an immutable header map
+            return new ProtoArticle(headerMap, bodyText);
+        }
+
+        public Map<String, Set<String>> getHeadersLowerCase() {
+            return Map.copyOf(headersLowerCase);
+        }
+
+        public String getBodyText() {
+            return bodyText;
+        }
+
+        public void addFieldIfNotPresent(NNTP_Standard_Article_Headers nntpStandardArticleHeaders, String value) {
+            if (!headersLowerCase.containsKey(nntpStandardArticleHeaders.getValue())) {
+                headersLowerCase.put(nntpStandardArticleHeaders.getValue(), Set.of(value));
+            } else if (headersLowerCase.get(nntpStandardArticleHeaders.getValue()).isEmpty()) {
+                headersLowerCase.get(nntpStandardArticleHeaders.getValue()).add(value);
             }
         }
     }

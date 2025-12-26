@@ -4,6 +4,7 @@ import org.anarplex.lib.nntp.env.*;
 import org.junit.jupiter.api.*;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -42,18 +43,18 @@ class ProtocolEngineTest {
     void testGroupAndArticleFlow() throws Exception {
         // Setup data
         Specification.NewsgroupName groupName = new Specification.NewsgroupName("comp.lang.java");
-        persistenceService.addGroup(groupName, "Java news", Specification.PostingMode.Allowed, new Date(), "test", false);
+        persistenceService.addGroup(groupName, "Java news", Specification.PostingMode.Allowed, LocalDateTime.now(), "test", false);
 
         Specification.MessageId mid = new Specification.MessageId("<test@postus>");
         Map<String, Set<String>> headers = new HashMap<>();
         headers.put("Newsgroups", Collections.singleton(groupName.getValue()));
         headers.put("Subject", Collections.singleton("Hello"));
         headers.put("From", Collections.singleton("tester@example.com"));
-        headers.put("Date", Collections.singleton("Fri, 20 Dec 2024 12:00:00 +0000"));
+        headers.put("Date", Collections.singleton("Thu, 08 Jan 2026 00:01:19"));  //   Fri, 20 Dec 2024 12:00:00 +0000"
         headers.put("Message-ID", Collections.singleton(mid.getValue()));
         headers.put("Path", Collections.singleton("host!not-for-email"));
 
-        persistenceService.getGroupByName(groupName).addArticle(mid, new Specification.Article.ArticleHeaders(headers), new StringReader("Body content"), false);
+        persistenceService.getGroupByName(groupName).addArticle(mid, new Specification.Article.ArticleHeaders(headers), "Body content", false);
 
         // Sequence: Select group -> Get article 1 -> QUIT
         String input = "GROUP comp.lang.java\r\nARTICLE 1\r\nQUIT\r\n";
@@ -92,7 +93,7 @@ class ProtocolEngineTest {
 
     private ProtocolEngine createEngine(String clientInput) {
         InputStream is = new ByteArrayInputStream(clientInput.getBytes(StandardCharsets.UTF_8));
-        NetworkUtils.ProtocolStreams streams = new MockNetworkUtils.MockProtocolStreams(is, serverOutput);
+        NetworkUtilities.ProtocolStreams streams = new MockNetworkUtilities.MockProtocolStreams(is, serverOutput);
         return new ProtocolEngine(persistenceService, identityService, policyService, streams);
     }
 }

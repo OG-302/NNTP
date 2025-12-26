@@ -4,28 +4,21 @@ import org.anarplex.lib.nntp.ProtocolEngine;
 import org.anarplex.lib.nntp.env.*;
 
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.net.ServerSocket;
-import java.net.Socket;
 
 public class NNTP_Service {
 
     /**
      * Create an NNTP Server on a specified listening port with specified backend store.
      * Service remains active until killed.
-     *
-     * @param args
-     * @throws Exception
      */
     public static void main(String[] args) throws Exception {
 
         // Open port for listening
-        NetworkUtils networkUtils = new MockNetworkUtils();
+        NetworkUtilities networkUtilities = MockNetworkUtilities.getInstance(MockNetworkUtilities.networkEnv);
 
-        NetworkUtils.ServiceManager serviceManager = networkUtils.registerService(new NetworkUtils.ConnectionListener() {
+        NetworkUtilities.ServiceManager serviceManager = networkUtilities.registerService(new NetworkUtilities.ConnectionListener() {
             @Override
-            public void onConnection(NetworkUtils.ProtocolStreams newConnection) {
+            public void onConnection(NetworkUtilities.ProtocolStreams newConnection) {
                 try (
                         PersistenceService persistenceService = new MockPersistenceService();
                         IdentityService identityService = new MockIdentityService();
@@ -46,10 +39,10 @@ public class NNTP_Service {
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 } finally {
-                    newConnection.close();
+                    newConnection.closeConnection();
                 }
             }
-        }, MockNetworkUtils.defaults);
+        });
 
         serviceManager.start();
     }

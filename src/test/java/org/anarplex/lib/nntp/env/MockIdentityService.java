@@ -13,7 +13,7 @@ public class MockIdentityService implements IdentityService {
     private boolean closed;
 
     @Override
-    public Long authenticate(String identity, String credentials) {
+    public Long authenticate(IdentityService.Subject identity, String credentials) {
         return 0L;
     }
 

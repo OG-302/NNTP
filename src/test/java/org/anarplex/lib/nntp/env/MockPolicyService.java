@@ -20,22 +20,22 @@ public class MockPolicyService implements PolicyService {
     }
 
     @Override
-    public boolean isPostingAllowed(Subject submitter) {
+    public boolean isPostingAllowed(IdentityService.Subject submitter) {
         return true;
     }
 
     @Override
-    public boolean isIHaveTransferAllowed(Subject submitter) {
+    public boolean isIHaveTransferAllowed(IdentityService.Subject submitter) {
         return true;
     }
 
     @Override
-    public boolean isNewsgroupAllowed(Specification.NewsgroupName newsgroup, Specification.PostingMode postingMode, int estNumArticles, Subject advertisingPeer) {
+    public boolean isNewsgroupAllowed(Specification.NewsgroupName newsgroup, Specification.PostingMode postingMode, int estNumArticles, PersistenceService.Peer advertisingPeer) {
         return true;
     }
 
     @Override
-    public boolean isArticleAllowed(Specification.MessageId messageId, Map<String, Set<String>> headerMap, StringReader bodyReader, Specification.NewsgroupName destination, Specification.PostingMode postingMode, Subject submitter) {
+    public boolean isArticleAllowed(Specification.MessageId messageId, Specification.Article.ArticleHeaders headerMap, String body, Specification.NewsgroupName destination, Specification.PostingMode postingMode, IdentityService.Subject submitter) {
         return true;
     }
 }
