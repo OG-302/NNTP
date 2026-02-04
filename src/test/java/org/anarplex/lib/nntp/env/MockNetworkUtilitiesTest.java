@@ -1,10 +1,10 @@
 package org.anarplex.lib.nntp.env;
 
 import org.anarplex.lib.nntp.ProtocolEngine;
+import org.anarplex.lib.nntp.Specification;
 import org.junit.jupiter.api.Test;
 
-import java.io.*;
-import java.nio.charset.StandardCharsets;
+import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.Properties;
 
@@ -12,16 +12,20 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class MockNetworkUtilitiesTest {
 
+    private final static String HOST = "127.0.0.1";
+    private final static int PORT = 3119;
+
     @Test
     void testConnectToPeer() throws IOException, InterruptedException {
         Properties props = new Properties();
-        props.setProperty("host", "localhost");
-        props.setProperty("port", "3119");
+        props.setProperty("host", HOST);
+        props.setProperty("port", String.valueOf(PORT));
 
         MockNetworkUtilities networkUtils = MockNetworkUtilities.getInstance(props);
 
-        // start server
-        NetworkUtilities.ServiceManager serviceManager = networkUtils.registerService(newConnection -> {
+        NetworkUtilities.ConnectionListener server =
+        // register our protocol engine as a handler which will process incoming connections
+        networkUtils.registerService(connectedClient -> {
             try (
                     PersistenceService persistenceService = new MockPersistenceService();
                     IdentityService identityService = new MockIdentityService();
@@ -31,9 +35,9 @@ class MockNetworkUtilitiesTest {
                 persistenceService.init();
 
                 // wire-up protocol engine
-                ProtocolEngine protocolEngine = new ProtocolEngine(persistenceService, identityService, policyService, newConnection);
+                ProtocolEngine protocolEngine = new ProtocolEngine(persistenceService, identityService, policyService, connectedClient);
 
-                // let 'er rip
+                // start the engine to process incoming commands
                 if (!protocolEngine.start()) {
                     System.err.println("Error encountered during client communication.");
                 }
@@ -42,10 +46,10 @@ class MockNetworkUtilitiesTest {
             } catch (Exception e) {
                 throw new RuntimeException(e);
             } finally {
-                newConnection.closeConnection();
+                connectedClient.close();
             }
         });
-        serviceManager.start();
+        server.start();
 
         // connect client to server
         PersistenceService.Peer peer = new PersistenceService.Peer() {
@@ -56,8 +60,13 @@ class MockNetworkUtilitiesTest {
             }
 
             @Override
+            public int getID() {
+                return 1;
+            }
+
+            @Override
             public String getAddress() {
-                return props.getProperty("host");
+                return "nntp://"+props.getProperty("host")+":"+props.getProperty("port");
             }
 
             @Override
@@ -87,28 +96,30 @@ class MockNetworkUtilitiesTest {
             public void setListLastFetched(LocalDateTime lastFetched) {
             }
         };
-        Thread.sleep(2000); // wait for the server to start
-        NetworkUtilities.ProtocolStreams clientSideStreams = networkUtils.connectToPeer(peer);
+        NetworkUtilities.ConnectedPeer connectedPeer = networkUtils.connectToPeer(peer);
 
-        // expect to find a welcome message
-        BufferedReader reader = clientSideStreams.getReader();
-        String initialResponse = new String(reader.readLine().getBytes(StandardCharsets.UTF_8));
-        assertTrue(initialResponse.startsWith("200"));
+        // expect to find a connected client
+        assertNotNull(connectedPeer);
+
+        // check that the server has READER capability
+        assertTrue(connectedPeer.hasCapability(Specification.NNTP_Server_Capabilities.READER));
 
         // send the QUIT command
-        PrintWriter sw = clientSideStreams.getWriter();
-        sw.print("QUIT\r\n");
-        sw.flush();
-        // and check response
-        String finalResponse = reader.readLine();
-        assertTrue(finalResponse.startsWith("205"));
+        connectedPeer.sendCommand(Specification.NNTP_Request_Commands.QUIT);
 
-        clientSideStreams.closeConnection();
-        serviceManager.terminate();
+        // check that the QUIT command was successful and got the success code
+        Specification.NNTP_Response_Code responseCode = connectedPeer.getResponseCode();
+        assertEquals(Specification.NNTP_Response_Code.Code_205, responseCode);
+
+        // check that QUIT actually closed the connection
+        assertFalse(connectedPeer.isConnected());
+
+        // kill the server thread
+        server.stop();
     }
 
     @Test
     void testDefaults() {
-        assertEquals("3119", MockNetworkUtilities.networkEnv.getProperty("port"));
+        assertEquals(String.valueOf(PORT), MockNetworkUtilities.networkEnv.getProperty("port"));
     }
 }

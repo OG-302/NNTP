@@ -1,18 +1,16 @@
 package org.anarplex.lib.nntp;
 
+import org.anarplex.lib.nntp.Specification.ArticleNumber;
 import org.anarplex.lib.nntp.env.NetworkUtilities;
 import org.anarplex.lib.nntp.env.PersistenceService;
 import org.anarplex.lib.nntp.env.PersistenceService.Feed;
 import org.anarplex.lib.nntp.env.PersistenceService.Newsgroup;
 import org.anarplex.lib.nntp.env.PolicyService;
-import org.anarplex.lib.nntp.Specification.NNTP_Response_Code;
-import org.anarplex.lib.nntp.Specification.ArticleNumber;
-
 import org.anarplex.lib.nntp.utils.DateAndTime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.*;
+import java.io.IOException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -33,9 +31,9 @@ public class PeerSynchronizer {
     public record ExternalNewsgroup(Specification.NewsgroupName name, Specification.PostingMode postingMode,
                                     ArticleNumber lowestArticleNumber, ArticleNumber highestArticleNumber) {
 
-    public int getEstimatedNumArticles() {
-        // some NNTP Servers will report an empty newsgroup as Highest = Lowest-1.  Avoid this when calculating size.
-        return (highestArticleNumber.getValue() < lowestArticleNumber.getValue()) ? 0 : highestArticleNumber.getValue() - lowestArticleNumber.getValue();
+        private int getEstimatedNumArticles() {
+            // some NNTP Servers will report an empty newsgroup as Highest = Lowest-1.  Avoid this when calculating size.
+            return (highestArticleNumber.getValue() < lowestArticleNumber.getValue()) ? 0 : highestArticleNumber.getValue() - lowestArticleNumber.getValue();
         }
     }
 
@@ -45,6 +43,9 @@ public class PeerSynchronizer {
         this.peerConnectionCache = new NetworkUtilities.PeerConnectionCache(networkUtilities);
     }
 
+    public void closeAllConnections() {
+        peerConnectionCache.closeAllConnections();
+    }
 
     /* fetchNewsgroupsList connects with the specified Peer and requests a list of all newsgroups created on that Peer
      * since last contacted by fetchNewsgroupsList(), or all its hosted newsgroups if this is the first time.
@@ -55,7 +56,7 @@ public class PeerSynchronizer {
      * - whether the newsgroup is new (see above) or already exists in the store, check to see if this peer mentioned as
      * a feed for the newsgroup and if it is not, make it so.
      */
-    public void fetchNewsgroupsList(NetworkUtilities.ConnectedPeer peer) {
+    public void fetchNewsgroupsList(NetworkUtilities.ConnectedPeer peer) throws IOException {
 
         if (peer == null) {
             logger.error("No Peer supplied to fetchNewsgroupsList() call.  Nothing to do.");
@@ -111,44 +112,45 @@ public class PeerSynchronizer {
     }
 
     /**
-     * Sends LIST NEWSGROUPS command to the supplied Peer to get descriptions of all its newsgroups.
+     * Sends LIST NEWSGROUPS command to the supplied Peer to get descriptions of all its newsgroups which is returned as a Map of newsgroup names to descriptions, possibly an empty map, or null on error.
      */
     protected Map<Specification.NewsgroupName, String> getNewsgroupDescriptions(NetworkUtilities.ConnectedPeer peer) {
-        Map<Specification.NewsgroupName, String> descriptions = new HashMap<>();
-
-        if (!peer.hasCapability(Specification.NNTP_Server_Capabilities.LIST)) {  // for LIST NEWSGROUPS command
-            logger.warn("Peer {} does not support READER.", peer.getAddress());
-            // TODO something else ?
-            return null;
-        }
-
-        sendCommand(peer, Specification.NNTP_Request_Commands.LIST, "NEWSGROUPS");
-        if (isResponseCode(peer, NNTP_Response_Code.Code_215)) {
-            // read responses
-            String line;
-            BufferedReader reader = peer.getReader();
-
+        if (peer.hasCapability(Specification.NNTP_Server_Capabilities.LIST)) {  // for LIST NEWSGROUPS command
+            peer.sendCommand(Specification.NNTP_Request_Commands.LIST_NEWSGROUPS);
             try {
-                // RFC-3977: Read multi-line response until a line containing only "." is found
-                while ((line = reader.readLine()) != null && !".".equals(line)) {
-                    String[] parts = line.split("\\s+", 2);    // format: <groupname> <description possibly with spaces>
-                    if (parts.length == 2) {
-                        try {
-                            descriptions.put(new Specification.NewsgroupName(parts[0]), parts[1]);
-                        } catch (Specification.NewsgroupName.InvalidNewsgroupNameException e) {
-                            logger.error("Invalid newsgroup name in LIST NEWSGROUPS response from peer: {}", e.getMessage());
-                            // ignore
+                Specification.NNTP_Response_Code responseCode = peer.getResponseCode();
+                if (responseCode != null) {
+                    if (Specification.NNTP_Response_Code.Code_215.equals(responseCode)) {// RFC-3977: Read multi-line response until a line containing only "." is found
+                        String peerResponse = peer.readUntilDotLine();
+                        // iterate over the response
+                        String[] lines = peerResponse.split("\r\n");
+                        Map<Specification.NewsgroupName, String> descriptions = new HashMap<>();
+                        for (String line : lines) {
+                            if (!".".equals(line)) {
+                                String[] parts = line.split("\\s+", 2);    // format: <groupname> <description possibly with spaces>
+                                try {
+                                    descriptions.put(new Specification.NewsgroupName(parts[0]), (parts.length > 1 ? parts[1] : ""));
+                                } catch (Specification.NewsgroupName.InvalidNewsgroupNameException e) {
+                                    logger.error("Invalid newsgroup name in LIST NEWSGROUPS response from peer: {}", e.getMessage());
+                                }
+                            } else {
+                                // a dot-line is the end of the list
+                                break;
+                            }
                         }
+                        return descriptions;
+                    } else {
+                        logger.error("Unexpected response code {} from LIST NEWSGROUPS command to peer {}", peer.getResponseCode(), peer.getAddress());
                     }
+                } else {
+                    logger.error("No response code from LIST NEWSGROUPS command to peer {}", peer.getAddress());
                 }
-            } catch (IOException e) {
+            } catch (IllegalArgumentException e) {
                 logger.error("Error reading LIST NEWSGROUPS response from peer: {}", e.getMessage());
-                throw new RuntimeException(e);
             }
         }
-        return descriptions;
+        return null;
     }
-
 
 
     /* syncNewsgroup takes the specified Newsgroup (already present in the PersistenceService) and updates it by
@@ -179,15 +181,14 @@ public class PeerSynchronizer {
         // checkpoint this instant in time to avoid race-conditions later
         LocalDateTime startOfSync = LocalDateTime.now();
 
-        // create a list of possible feeds for this newsgroup
+        // get the list of feeds for this newsgroup
         Feed[] feeds = newsgroup.getFeeds();
 
-        //
+        // keep a map of messageIds found on each feed for this newsgroup
         Map<Feed, List<Specification.MessageId>> msgIds = new HashMap<>();
 
-        // Phase 1: Download new articles from peers.  These interactions begin with NEWNEWS but then proceed to
+        // Phase 1: Download new articles from feeds (peers).  These interactions begin with NEWNEWS but then proceed to
         // pipelined ARTICLE commands to fetch articles found on the peer but not in our store.
-        // Keep
         for (Feed f : feeds) {
             if (f.getPeer().getDisabledStatus()) {
                 // skip over peers that have been marked as disabled
@@ -196,11 +197,11 @@ public class PeerSynchronizer {
 
             NetworkUtilities.ConnectedPeer connectedPeer = peerConnectionCache.getConnectedPeer(f.getPeer());
 
-            if (connectedPeer == null || connectedPeer.getWriter().checkError()) {
+            if (connectedPeer == null || !connectedPeer.isConnected()) {
                 // peer is not connected properly.  skip it.
                 logger.warn("Peer {} is not connected properly.  Skipping sync.", f.getPeer().getLabel());
                 if (connectedPeer != null) {
-                    connectedPeer.closeConnection();
+                    connectedPeer.close();
                 }
                 continue;
             }
@@ -211,13 +212,13 @@ public class PeerSynchronizer {
             }
 
             // connect to the Peer and use the NEWNEWS (or, if not supported, LISTGROUP) capability to get a list of
-            // MessageIds of new Articles which are returned in the list.
+            // MessageIds of new Articles.
             msgIds.put(f, getNewMessageIds(f));
 
             // the set of messageIds to be fetched (because we don't have those articles)
             Set<Specification.MessageId> fetchIds = new HashSet<>(msgIds.get(f));
 
-            // determine which articles mentioned in msgIds and not already present in our persistent store
+            // determine which articles mentioned in msgIds are not already present in our persistent store
             for (Specification.MessageId msgId : msgIds.get(f)) {
                 try {
                     if (newsgroup.getArticle(msgId) == null) {
@@ -241,16 +242,15 @@ public class PeerSynchronizer {
 
             // send a pipelined request to the peer for all the articles we don't have
             for (Specification.MessageId msgId : fetchIds) {
-                sendCommand(connectedPeer, Specification.NNTP_Request_Commands.ARTICLE, msgId.getValue());
+                connectedPeer.sendCommand(Specification.NNTP_Request_Commands.ARTICLE, msgId.getValue());
             }
 
             // read pipelined responses from peer.  These are all articles that we don't currently have.
-            BufferedReader reader = connectedPeer.getReader();
             try {
                 // expecting the same number of (pipelined) responses as requests
                 for (int i = 0; i < fetchIds.size(); i++) {
                     // read the pipelined response from the peer - a response status line followed by an article
-                    String line = reader.readLine();   // the response line which separates Articles.
+                    String line = connectedPeer.readLine();   // the response line which separates Articles.
                     String[] parts = line.split("\\s+");
                     if (3 <= parts.length && "220".equals(parts[0])) {  // Format: 220 0|n <message-id> Article follows (multi-line)
                         Specification.MessageId msgId;
@@ -259,7 +259,7 @@ public class PeerSynchronizer {
                         msgId = new Specification.MessageId(parts[2]);
 
                         // read stream into an article object
-                        Specification.ProtoArticle protoArticle = Specification.ProtoArticle.readFrom(connectedPeer.getReader());
+                        Specification.ProtoArticle protoArticle = Specification.ProtoArticle.fromString(connectedPeer.readUntilDotLine());
 
                         // proto article should pass validation
                         Specification.Article.ArticleHeaders articleHeaders = new Specification.Article.ArticleHeaders(protoArticle.getHeadersLowerCase());
@@ -296,7 +296,7 @@ public class PeerSynchronizer {
                             try {
                                 Specification.Article streamedArticle = new Specification.Article(msgId, articleHeaders, protoArticle.getBodyText());
 
-                                PersistenceService.NewsgroupArticle addedArticle = newsgroup.addArticle(msgId, articleHeaders, protoArticle.getBodyText(), isAllowed);
+                                PersistenceService.NewsgroupArticle addedArticle = newsgroup.addArticle(msgId, articleHeaders, protoArticle.getBodyText(), !isAllowed);
 
                                 Set<Specification.NewsgroupName> newsgroupNames = streamedArticle.getAllHeaders().getNewsgroups();
                                 newsgroupNames.remove(newsgroup.getName()); // delete from the set the newsgroup we just added this article to
@@ -316,9 +316,6 @@ public class PeerSynchronizer {
                         }
                     }
                 }
-            } catch (IOException e) {
-                logger.error("Error reading NEWNEWS response from peer {}: {}", connectedPeer.getAddress(), e.getMessage());
-                throw new RuntimeException(e);
             } catch (Specification.MessageId.InvalidMessageIdException e) {
                 logger.error("Error reading NEWNEWS response from peer.  Invalid MessageID in response line {}: {}", connectedPeer.getAddress(), e.getMessage());
                 throw new RuntimeException(e);
@@ -337,29 +334,101 @@ public class PeerSynchronizer {
                 // skip over peers that have been marked as disabled
                 continue;
             }
+            // calculate the articles that we have and that the peer does not, so that they can be shared with the peer.
 
-            // get the list of articles added to the newsgroup in our store since we last shared with this feed
-            Iterator<PersistenceService.NewsgroupArticle> newArticles = newsgroup.getArticlesSince(f.getLastSyncTime());
+            // get the list of messageIds of articles the peer has informed us they already have
+            List<Specification.MessageId> msgIdsOnPeer = msgIds.get(f);
 
-            // get the list of messageIds of articles already present on the peer
-            List<Specification.MessageId> msgIdsOfFeed = msgIds.get(f);
-
-            // inform the peer of these new Articles
-            while (newArticles.hasNext()) {
-                // with each article ...
-                PersistenceService.NewsgroupArticle article = newArticles.next();
-
-                // if the peer has not indicated they already have the article, offer it to them.
-                if (!msgIdsOfFeed.contains(article.getMessageId())) {
-                    NetworkUtilities.ConnectedPeer connectedPeer = peerConnectionCache.getConnectedPeer(f.getPeer());
-                    if (connectedPeer != null && !connectedPeer.getWriter().checkError()) {
-                        iHave(peerConnectionCache.getConnectedPeer(f.getPeer()), article);
+            // get the list of articles added to the newsgroup in our store since last sync time with this peer on this newsgroup.
+            LocalDateTime lastSyncTime = f.getLastSyncTime();
+            if (lastSyncTime == null) {
+                lastSyncTime = DateAndTime.EPOCH;
+            }
+            Iterator<PersistenceService.NewsgroupArticle> newArticles = newsgroup.getArticlesSince(lastSyncTime);
+            if (newArticles != null) {
+                Set<Specification.Article> articlesToOffer = new HashSet<>();   // new articles to share with peer
+                while (newArticles.hasNext()) {
+                    PersistenceService.NewsgroupArticle article = newArticles.next();
+                    // add this article to the set to be shared only if the peer does not already have it.
+                    if (!msgIdsOnPeer.contains(article.getMessageId())) {
+                        articlesToOffer.add(article);
                     }
                 }
-            }
 
-            // update the lastSyncTime in the feed
-            f.setLastSyncTime(startOfSync);
+                if (!articlesToOffer.isEmpty()) {
+                    // get a connection to the peer
+                    NetworkUtilities.ConnectedPeer connectedPeer = peerConnectionCache.getConnectedPeer(f.getPeer());
+
+                    if (connectedPeer != null && connectedPeer.isConnected()) {
+                        // check that the Peer supports IHAVE capability
+                        if (connectedPeer.hasCapability(Specification.NNTP_Server_Capabilities.I_HAVE)) {
+
+                            // for each article provided
+                            for (Specification.Article article : articlesToOffer) {
+                                if (connectedPeer.isConnected()) {
+                                    // send IHAVE request to peer
+                                    connectedPeer.sendCommand(Specification.NNTP_Request_Commands.IHAVE, article.getMessageId().getValue());
+                                    // check the response to see if it's wanted
+                                    Specification.NNTP_Response_Code responseCode = connectedPeer.getResponseCode();
+                                    switch (responseCode) {
+                                        case Specification.NNTP_Response_Code.Code_335: // peer is interested, send article
+                                            logger.info("Peer {} indicated interest in sending article {}. Sending article.", connectedPeer.getLabel(), article.getMessageId());
+                                            // send article to peer
+                                            connectedPeer.printf("%s", article);
+                                            // check response from peer about the article transfer
+                                            Specification.NNTP_Response_Code responseCode2 = connectedPeer.getResponseCode();
+                                            switch (responseCode2) {
+                                                case Specification.NNTP_Response_Code.Code_235: // transfer successful
+                                                    logger.info("Peer {} indicated transfer of article {} was successful.", connectedPeer.getLabel(), article.getMessageId());
+                                                    articlesToOffer.remove(article);
+                                                    continue;
+                                                case Specification.NNTP_Response_Code.Code_436: // transfer failed; try again later
+                                                    logger.warn("Peer {} indicated transfer of article {} not possible at this time.  Try again later.", connectedPeer.getAddress(), article.getMessageId());
+                                                    connectedPeer.close();
+                                                    continue;
+                                                case Specification.NNTP_Response_Code.Code_437: // transfer rejected; do not retry
+                                                    logger.info("Peer {} indicated transfer of article {} failed and not to try again.", connectedPeer.getAddress(), article.getMessageId());
+                                                    // presume this will be true for all articles attempted
+                                                    articlesToOffer.remove(article);
+                                                    continue;
+                                                default:
+                                                    logger.warn("Peer {} indicated unexpected response code {} to IHAVE command.", connectedPeer.getLabel(), responseCode2);
+                                            }
+                                            continue;
+                                        case Specification.NNTP_Response_Code.Code_435: // peer is not interested, skip article
+                                            logger.info("Peer {} indicated it was not interested in article {}.  Article not shared.", connectedPeer.getLabel(), article.getMessageId());
+                                            articlesToOffer.remove(article);
+                                            continue;
+                                        case Specification.NNTP_Response_Code.Code_436: // transfer not possible; try again later
+                                            logger.warn("Peer {} indicated transfer of article {} not possible at this time.  Try again later.", connectedPeer.getLabel(), article.getMessageId());
+                                            // presume this will be true for all articles attempted
+                                            connectedPeer.close();
+                                            continue;
+                                        default:
+                                            logger.warn("Peer {} indicated unexpected response code {} to IHAVE command.", connectedPeer.getLabel(), responseCode);
+                                    }
+                                } else {
+                                    logger.warn("Peer {} is not connected properly. No (further) sharing of articles with peer.", f.getPeer().getLabel());
+                                    break;
+                                }
+                            }
+                            if (articlesToOffer.isEmpty()) {
+                                // no unshared articles.
+                                // update the lastSyncTime in the feed
+                                f.setLastSyncTime(startOfSync);
+                            }
+                        } else {
+                            logger.warn("Peer {} does not support IHAVE capability.", connectedPeer.getLabel());
+                        }
+                    } else {
+                        logger.error("Peer {} is not connected properly. No sharing of articles with peer.", f.getPeer().getLabel());
+                    }
+                } else {
+                    logger.info("No new articles to share with peer {} that the peer does not already have.", f.getPeer().getLabel());
+                }
+            } else {
+                logger.info("No new articles in this newsgroup {} since last synced {} with peer {}", f.getNewsgroup().getName(), lastSyncTime, f.getPeer().getLabel());
+            }
         }
     }
 
@@ -372,75 +441,49 @@ public class PeerSynchronizer {
 
         NetworkUtilities.ConnectedPeer connectedPeer = peerConnectionCache.getConnectedPeer(feed.getPeer());
 
-        if (!connectedPeer.hasCapability(Specification.NNTP_Server_Capabilities.NEW_NEWS)) {
-            logger.warn("Peer {} does not support NEWNEWS.", connectedPeer.getAddress());
-            // TODO is there another way to obtain a list of Newsgroups new to us?
-            return null;
-        }
+        if (connectedPeer != null && connectedPeer.isConnected()) {
+            if (connectedPeer.hasCapability(Specification.NNTP_Server_Capabilities.NEW_NEWS)) {
 
-        // send command: NEWNEWS <newsgroupname> yyyyMMdd hhmmss GMT
-        sendCommand(connectedPeer,
-                Specification.NNTP_Request_Commands.NEW_NEWS,
-                    feed.getNewsgroup().getName().getValue(),
-                    DateAndTime.format2(feed.getLastSyncTime()) + " GMT");
+                // send command: NEWNEWS <newsgroupname> yyyyMMdd hhmmss GMT
+                connectedPeer.sendCommand(
+                        Specification.NNTP_Request_Commands.NEW_NEWS,
+                        feed.getNewsgroup().getName().toString(),
+                        DateAndTime.formatTo_yyyyMMdd_hhmmss((feed.getLastSyncTime() != null ? feed.getLastSyncTime() : DateAndTime.EPOCH)));
 
-        // check result
-        BufferedReader reader = connectedPeer.getReader();
-        if (isResponseCode(connectedPeer, NNTP_Response_Code.Code_230)) {
-            // read the lines of message_ids
-            String line = "";
-            try {
-                while ((line = reader.readLine()) != null && !".".equals(line)) {
-                    //
-                    try {
-                        Specification.MessageId m = new Specification.MessageId(line.trim());
-                        result.add(m);
-                    } catch (Specification.MessageId.InvalidMessageIdException e) {
-                        logger.error("Invalid MessageId in NEWNEWS response from peer {}: {}", connectedPeer.getAddress(), e.getMessage());
-                        // ignore this messageId and try processing the next in the list
+                try {
+                    // check result
+                    Specification.NNTP_Response_Code responseCode = connectedPeer.getResponseCode();
+                    if (responseCode != null) {
+                        if (Specification.NNTP_Response_Code.Code_230.equals(responseCode)) {// read the entire response from peer
+                            String peerResponse = connectedPeer.readUntilDotLine();
+                            // interpret as a list of messageIds
+                            for (String line : peerResponse.split("\r\n")) {
+                                if (!".".equals(line)) {
+                                    // interpret line as a messageID
+                                    try {
+                                        Specification.MessageId m = new Specification.MessageId(line.trim());
+                                        result.add(m);
+                                    } catch (Specification.MessageId.InvalidMessageIdException e) {
+                                        logger.error("Invalid MessageId in NEWNEWS response from peer {}: {}", connectedPeer.getAddress(), e.getMessage());
+                                    }
+                                }
+                            }
+                        } else {
+                            logger.warn("Peer {} returned unexpected response code {} to NEWNEWS command.", connectedPeer.getAddress(), responseCode);
+                        }
                     }
+                } catch (IllegalArgumentException e) {
+                    logger.error("Error reading NEWNEWS response from peer {}: {}", connectedPeer.getAddress(), e.getMessage());
                 }
-            } catch (IOException e) {
-                logger.error("Error reading NEWNEWS response from peer {}: {}", connectedPeer.getAddress(), e.getMessage());
-                throw new RuntimeException(e);
+            } else {
+                logger.warn("Peer {} does not support NEWNEWS.", connectedPeer.getAddress());
             }
+        } else {
+            logger.warn("Peer {} is not connected properly.  Skipping sync.", feed.getPeer().getLabel());
         }
         return result;
     }
 
-    /**
-     * Offer the specified Article to the specified Peer using the IHAVE command.
-     * Requires the peer support the IHAVE capability.
-     */
-    protected void iHave(NetworkUtilities.ConnectedPeer peer, PersistenceService.NewsgroupArticle article) {
-        if (peer == null) {
-            logger.error("Peer should not be null in call to iHave()");
-            return; // TODO this or RuntimeException?
-        }
-
-        if (!peer.hasCapability(Specification.NNTP_Server_Capabilities.I_HAVE)) {
-            logger.warn("Peer {} does not support IHAVE.", peer.getAddress());
-        }
-
-        // send request to peer
-        sendCommand(peer, Specification.NNTP_Request_Commands.IHAVE, article.getMessageId().getValue());
-
-        if (isResponseCode(peer, NNTP_Response_Code.Code_223)) {
-            // peer is interested, send article
-            try {
-                PrintWriter writer = peer.getWriter();
-                article.writeTo(writer);
-                writer.flush();
-            } catch (IOException e) {
-                logger.error("Error writing article to peer {}: {}", peer.getAddress(), e.getMessage());
-                throw new RuntimeException(e);
-            }
-            logger.info("Shared article {} with peer {}", article.getMessageId(), peer.getAddress());
-        }
-        else {
-            logger.warn("Peer {} indicated it was not interested in article {}.  Article not shared.", peer.getAddress(), article.getMessageId());
-        }
-    }
 
     /**
      * Contact the peer to get its local data and time.  If the response is not a 211 code or if the result can not
@@ -452,38 +495,38 @@ public class PeerSynchronizer {
             return null;    // TODO this or RuntimeException?
         }
 
-        if (!peer.hasCapability(Specification.NNTP_Server_Capabilities.READER)) {
-            logger.warn("Peer {} does not support DATE.", peer.getAddress());
-            // TODO is there another way to obtain a current time on server?
-            return null;
-        }
+        if (peer.hasCapability(Specification.NNTP_Server_Capabilities.READER)) {
 
-        // contact peer for its local date time
-        sendCommand(peer, Specification.NNTP_Request_Commands.DATE);
+            // contact peer for its local date time
+            peer.sendCommand(Specification.NNTP_Request_Commands.DATE);
 
-        try {
-            if (isResponseCode(peer, NNTP_Response_Code.Code_111)) {
-                // expecting format yyyyMMddhhmmss
-                return DateAndTime.parse1(peer.getReader().readLine());
+            Specification.NNTP_Response_Code responseCode = peer.getResponseCode();
+            if (Specification.NNTP_Response_Code.Code_111.equals(responseCode)) {
+                return DateAndTime.parse_yyyMMddHHmmss(peer.readLine());
+            } else {
+                logger.warn("Peer {} returned unexpected response code {} to DATE command.", peer.getLabel(), responseCode);
             }
-        } catch (IOException e) {
-            logger.error(e.getMessage());
+
+            // default value is unix epoch
+            return DateAndTime.EPOCH;
+        } else {
+            logger.warn("Peer {} does not support DATE.", peer.getLabel());
         }
-        // default value is unix epoch
-        return DateAndTime.EPOCH;
+        return null;
     }
 
     /**
      * Asks the Peer for a list of Newsgroups it maintains.
      */
     protected ExternalNewsgroup[] getNewNewsgroupsList(NetworkUtilities.ConnectedPeer peer) {
+        ArrayList<ExternalNewsgroup> newsgroups = new ArrayList<>();
 
         if (peer == null) {
             logger.error("Peer should not be null in call to getNewNewsgroupsList()");
             return null;
         }
 
-        if (!peer.hasCapability(Specification.NNTP_Server_Capabilities.NEW_NEWS)) {
+        if (!peer.hasCapability(Specification.NNTP_Server_Capabilities.READER)) {
             logger.warn("Peer {} does not support NEWNEWS.  Using LISTGROUPS instead.", peer.getAddress());
             // TODO is there another way to obtain a list of Newsgroups new to us?
             return null;
@@ -494,93 +537,67 @@ public class PeerSynchronizer {
 
         if (lastFetched == null) {
             lastFetched = LocalDateTime.ofInstant(Instant.ofEpochMilli(0), ZoneId.of("UTC")); // Default to unix epoch if never fetched
-        }
 
-        BufferedReader reader = peer.getReader();
-        PrintWriter writer = peer.getWriter();
+            // send NewGroups command to Peer to get its list of Newsgroups, as per RFC-3977 format: NEWGROUPS yyyyMMdd hhmmss
+            peer.sendCommand(Specification.NNTP_Request_Commands.NEW_GROUPS, DateAndTime.formatTo_yyyyMMdd_hhmmss(lastFetched));
 
-        // send NewGroups command to Peer to get its list of Newsgroups, as per RFC-3977 format: NEWGROUPS yyyyMMdd hhmmss
-        sendCommand(peer, Specification.NNTP_Request_Commands.NEW_GROUPS, DateAndTime.format2(lastFetched));
 
-        // read response from inputStream
-        try {
-            if (isResponseCode(peer, NNTP_Response_Code.Code_231)) {
+
+            // read response from inputStream
+            if (Specification.NNTP_Response_Code.Code_231.equals(peer.getResponseCode())) {
                 // request accepted.  response follows
-                ArrayList<ExternalNewsgroup> newsgroups = new ArrayList<>();
-
-                String line;
 
                 // RFC-3977: Read multi-line response until a line containing only "." is found
-                while ((line = reader.readLine()) != null && !".".equals(line)) {
-                    String[] parts = line.split("\\s+");    // format: <groupname> <high> <low> <status>
-                    if (parts.length >= 4) {
-                        try {
-                            // fetch newsgroup name from response
-                            Specification.NewsgroupName name = new Specification.NewsgroupName(parts[0]);
+                String response = peer.readUntilDotLine();
+                // split response into lines
+                for (String line : response.split(Specification.CRLF)) {
+                    try {
+                        // for each line in the response
+                        String[] parts = line.split("\\s+");    // format: <groupname> <high> <low> <status>
+                        Specification.NewsgroupName name = new Specification.NewsgroupName(parts[0]);
 
-                            // fetch high and low article numbers from response
-                            int high = Integer.parseInt(parts[1]);
-                            int low = Integer.parseInt(parts[2]);
+                        // fetch high and low article numbers from response
+                        int high = Integer.parseInt(parts[1]);
+                        int low = Integer.parseInt(parts[2]);
 
-                            // adopt our convention for out-of-bounds high and low article numbers
-                            if (high == low-1 || (high == low && low == 0)) {
-                                high = Specification.NoArticlesHighestNumber;
-                                low = Specification.NoArticlesLowestNumber;
-                            }
-                            // and sanitize invalid values
-                            if (!ArticleNumber.isValid(high)) {
-                                logger.error("Invalid high article number: {}", high);
-                                high = Specification.NoArticlesHighestNumber;
-                            }
-                            if (!ArticleNumber.isValid(low)) {
-                                logger.error("Invalid low article number: {}", low);
-                                low = Specification.NoArticlesLowestNumber;
-                            }
-
-                            // Map NNTP status character to domain PostingMode
-                            Specification.PostingMode mode = switch (parts[3].toLowerCase()) {
-                                case "y" -> Specification.PostingMode.Allowed;
-                                case "m" -> Specification.PostingMode.Moderated;
-                                default -> Specification.PostingMode.Prohibited;
-                            };
-
-                            newsgroups.add(new ExternalNewsgroup(name, mode, new ArticleNumber(low), new ArticleNumber(high)));
-                        } catch (Exception e) {
-                            logger.warn("Malformed newsgroup entry received from peer {}: {}", peer.getAddress(), line);
+                        // adopt our convention for out-of-bounds high and low article numbers
+                        if (high == low - 1 || (high == low && low == 0)) {
+                            high = Specification.NoArticlesHighestNumber;
+                            low = Specification.NoArticlesLowestNumber;
                         }
+                        // and sanitize invalid values
+                        if (!ArticleNumber.isValid(high)) {
+                            logger.error("Invalid high article number: {}", high);
+                            high = Specification.NoArticlesHighestNumber;
+                        }
+                        if (!ArticleNumber.isValid(low)) {
+                            logger.error("Invalid low article number: {}", low);
+                            low = Specification.NoArticlesLowestNumber;
+                        }
+
+                        // Map NNTP status character to domain PostingMode
+                        Specification.PostingMode mode = switch (parts[3].toLowerCase()) {
+                            case "y" -> Specification.PostingMode.Allowed;
+                            case "m" -> Specification.PostingMode.Moderated;
+                            default -> Specification.PostingMode.Prohibited;
+                        };
+
+                        newsgroups.add(new ExternalNewsgroup(name, mode, new ArticleNumber(low), new ArticleNumber(high)));
+                    } catch (Specification.NewsgroupName.InvalidNewsgroupNameException
+                             | Specification.ArticleNumber.InvalidArticleNumberException e) {
+                        logger.warn("Malformed newsgroup entry received from peer {}: {}", peer.getAddress(), line);
                     }
                 }
-
-                // Update the peer's fetch timestamp upon successful retrieval
-                LocalDateTime peerServerTime = getTimeAndDateOnPeer(peer);
-                if (peerServerTime == null) {
-                    peerServerTime = DateAndTime.EPOCH;     // in the worst case, just keep using unix epoch
-                }
-                peer.setListLastFetched(peerServerTime);
-                return newsgroups.toArray(new ExternalNewsgroup[0]);
             }
-        } catch (IOException e) {
-            logger.error("Error reading response from Peer", e);
-            throw new RuntimeException(e);
-        }
-        return new ExternalNewsgroup[0];
-    }
 
-    /**
-     * Send the supplied NNTP command to the supplied peer, possibly including optional arguments.
-     */
-    protected void sendCommand(NetworkUtilities.ConnectedPeer peer, Specification.NNTP_Request_Commands nntpRequestCommand, String... args) {
-        peer.getWriter().printf("%s %s\r\n", nntpRequestCommand.name(), (args != null ? String.join(" ", args) : "")).flush();
-    }
+            // Update the peer's fetch timestamp upon successful retrieval
+            LocalDateTime peerServerTime = getTimeAndDateOnPeer(peer);
+            if (peerServerTime == null) {
+                peerServerTime = DateAndTime.EPOCH;     // in the worst case, just keep using unix epoch
+            }
+            peer.setListLastFetched(peerServerTime);
 
-    /**
-     * Determine whether the response code from the peer matches the supplied NNTP response code.
-     */
-    protected boolean isResponseCode(NetworkUtilities.ConnectedPeer peer, NNTP_Response_Code nntpResponseCode){
-        try {
-            return peer.getReader().readLine().stripLeading().startsWith(nntpResponseCode.name());
-        } catch (IOException e) {
-            throw new RuntimeException(e);
         }
+        return newsgroups.toArray(new ExternalNewsgroup[0]);
     }
 }

@@ -1,6 +1,8 @@
 package org.anarplex.lib.nntp.env;
 
 import org.anarplex.lib.nntp.Specification;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.nio.file.Files;
@@ -18,6 +20,7 @@ import java.util.stream.Collectors;
  * Data is persisted to disk on close() and restored on init().
  */
 public class MockPersistenceService implements PersistenceService {
+    private static final Logger logger = LoggerFactory.getLogger(MockPersistenceService.class);
 
     static private final Map<Specification.MessageId, NewsgroupArticle> articles = new ConcurrentHashMap<>();
     static private final Map<Specification.MessageId, Date> rejectedArticles = new ConcurrentHashMap<>();
@@ -25,7 +28,8 @@ public class MockPersistenceService implements PersistenceService {
     static private final Map<String, PeerImpl> peers = new ConcurrentHashMap<>();
     static private final AtomicInteger peerIdCounter = new AtomicInteger(1);
 
-    private static final String PERSISTENCE_DIR = "dataSources/mock-persistence";
+    private static final String PERSISTENCE_DIR_ROOT = "dataSources/mock-persistence";
+    private static String PERSISTENCE_DIR = PERSISTENCE_DIR_ROOT + "/nntp";
     private static final String ARTICLES_FILE = "articles.ser";
     private static final String REJECTED_ARTICLES_FILE = "rejectedArticles.ser";
     private static final String NEWSGROUPS_FILE = "newsgroups.ser";
@@ -33,6 +37,12 @@ public class MockPersistenceService implements PersistenceService {
     private static final String PEER_ID_COUNTER_FILE = "peerIdCounter.ser";
 
     private static Boolean isDataLoaded = false;
+
+    static {
+        if (System.getenv("nntp.port") != null) {
+            PERSISTENCE_DIR =  PERSISTENCE_DIR_ROOT + "/" + System.getenv("nntp.port");
+        }
+    }
 
     @Override
     public void init() {
@@ -99,7 +109,7 @@ public class MockPersistenceService implements PersistenceService {
                 oos.writeInt(peerIdCounter.get());
             }
         } catch (IOException e) {
-            System.err.println("Warning: Failed to persist MockPersistenceService data: " + e.getMessage());
+            logger.error("Warning: Failed to persist MockPersistenceService data: {}", e.getMessage());
         }
     }
 
@@ -169,8 +179,7 @@ public class MockPersistenceService implements PersistenceService {
             }
             isDataLoaded = true;
         } catch (IOException | ClassNotFoundException e) {
-            System.err.println("Warning: Failed to load MockPersistenceService data: " + e.getMessage());
-            rollback();
+            logger.error("Warning: Failed to load MockPersistenceService data: {}", e.getMessage());
         }
     }
 
@@ -245,7 +254,7 @@ public class MockPersistenceService implements PersistenceService {
                 throw new ExistingPeerException("Peer already exists with that address");
             }
         }
-        PeerImpl peer = new PeerImpl(label, address);
+        PeerImpl peer = new PeerImpl(peerIdCounter.getAndIncrement(), label, address);
         peers.put(peer.address, peer);
         return peer;
     }
@@ -604,18 +613,25 @@ public class MockPersistenceService implements PersistenceService {
         }
     }
 
-    private static class PeerImpl implements Peer, Serializable {
+    public static class PeerImpl implements Peer, Serializable {
         @Serial
         private static final long serialVersionUID = 1L;
+        private final int id;
         private String label;
         private final String address;
         private boolean disabled;
         private LocalDateTime listLastFetched;
 
-        PeerImpl(String label, String address) {
+        PeerImpl(int id, String label, String address) {
+            this.id = id;
             this.label = label;
             this.address = address;
             this.disabled = false;
+        }
+
+        @Override
+        public int getID() {
+            return id;
         }
 
         @Override

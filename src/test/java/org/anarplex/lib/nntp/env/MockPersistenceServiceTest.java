@@ -1,8 +1,8 @@
 package org.anarplex.lib.nntp.env;
 
+import org.anarplex.lib.nntp.Specification;
 import org.anarplex.lib.nntp.utils.DateAndTime;
 import org.anarplex.lib.nntp.utils.RandomNumber;
-import org.anarplex.lib.nntp.Specification;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -13,7 +13,7 @@ import java.util.*;
 import static org.anarplex.lib.nntp.Specification.NNTP_Standard_Article_Headers;
 import static org.junit.jupiter.api.Assertions.*;
 
-class MockPersistenceServiceTest {
+public class MockPersistenceServiceTest {
 
     // For testing purposes
     static final Specification.MessageId nonExistentMessageId;  // should not exist in database
@@ -122,7 +122,7 @@ class MockPersistenceServiceTest {
         Specification.Article.ArticleHeaders articleHeaders = new Specification.Article.ArticleHeaders(headers);
         assertNotNull(articleHeaders);
 
-        // Create article body
+        // Create an article body
         String bodyContent = "This is a test article.\nLine 2.\nLine 3.";
 
         // Get the current metrics before adding
@@ -281,7 +281,7 @@ class MockPersistenceServiceTest {
 
     @Test
     void addPeer() throws PersistenceService.ExistingPeerException {
-        String address = "127.0.0.1";
+        String address = Long.toString(System.currentTimeMillis(), 16); // new, unique address
         String label = "local.tmp.test.peer1."+System.currentTimeMillis();
         PersistenceService.Peer peer = persistenceService.addPeer(label, address);
 
@@ -292,7 +292,7 @@ class MockPersistenceServiceTest {
 
     @Test
     void removePeer() throws PersistenceService.ExistingPeerException {
-        String address = "127.0.0.2";
+        String address = Long.toString(System.currentTimeMillis(), 16); // new, unique address
         String label = "local.tmp.test.peer2."+System.currentTimeMillis();
         PersistenceService.Peer peer = persistenceService.addPeer(label, address);
 

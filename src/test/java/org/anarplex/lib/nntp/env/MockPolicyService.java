@@ -2,11 +2,6 @@ package org.anarplex.lib.nntp.env;
 
 import org.anarplex.lib.nntp.Specification;
 
-import javax.security.auth.Subject;
-import java.io.StringReader;
-import java.util.Map;
-import java.util.Set;
-
 public class MockPolicyService implements PolicyService {
     private boolean closed;
 
@@ -20,12 +15,12 @@ public class MockPolicyService implements PolicyService {
     }
 
     @Override
-    public boolean isPostingAllowed(IdentityService.Subject submitter) {
+    public boolean isPostingAllowedBy(IdentityService.Subject submitter) {
         return true;
     }
 
     @Override
-    public boolean isIHaveTransferAllowed(IdentityService.Subject submitter) {
+    public boolean isIHaveTransferAllowedBy(IdentityService.Subject submitter) {
         return true;
     }
 

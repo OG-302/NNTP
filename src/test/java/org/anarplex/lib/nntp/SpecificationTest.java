@@ -1,9 +1,7 @@
 package org.anarplex.lib.nntp;
 
-import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -96,7 +94,7 @@ class SpecificationTest {
         testHeaders.put(Specification.NNTP_Standard_Article_Headers.MessageID.getValue(), Set.of("<1234567890>"));
         testHeaders.put(Specification.NNTP_Standard_Article_Headers.Subject.getValue(), Set.of("test subject"));
         testHeaders.put(Specification.NNTP_Standard_Article_Headers.From.getValue(), Set.of("test person"));
-        testHeaders.put(Specification.NNTP_Standard_Article_Headers.Date.getValue(), Set.of("Thu, 1 Jan 1970 00:00:00"));
+        testHeaders.put(Specification.NNTP_Standard_Article_Headers.Date.getValue(), Set.of("Thu, 1 Jan 1970 00:00:00 GMT"));
         testHeaders.put(Specification.NNTP_Standard_Article_Headers.Newsgroups.getValue(), Set.of("test.group"));
         testHeaders.put(Specification.NNTP_Standard_Article_Headers.References.getValue(), Set.of("<1234567891>"));
         testHeaders.put(Specification.NNTP_Standard_Article_Headers.Path.getValue(), Set.of("test.path"));
@@ -152,11 +150,12 @@ class SpecificationTest {
     void isDateValid() {
         assertTrue(Specification.Article.ArticleHeaders.isValidDate("Thu, 1 Jan 1970 00:00:00"));       // canonical form
 
-        assertTrue(Specification.Article.ArticleHeaders.isValidDate("Thu, 1 Jan 1970 00:00:00 +0000")); // timezone offset
-        assertTrue(Specification.Article.ArticleHeaders.isValidDate("Thu, 1 Jan 1970 00:00:00 -0000")); // timezone offset
         assertTrue(Specification.Article.ArticleHeaders.isValidDate("Thu, 1 Jan 1970 00:00:00 GMT"));   // timezone offset
         assertTrue(Specification.Article.ArticleHeaders.isValidDate("Thu, 1 Jan 1970 00:00:00 UTC"));   // timezone offset
         assertTrue(Specification.Article.ArticleHeaders.isValidDate("Thu, 1 Jan 1970 00:00:00 Z"));     // timezone offset
+
+        assertTrue(Specification.Article.ArticleHeaders.isValidDate("Thu, 1 Jan 1970 00:00:00 +0100")); // timezone offset
+        assertTrue(Specification.Article.ArticleHeaders.isValidDate("Thu, 1 Jan 1970 00:00:00 -0000")); // timezone offset
 
         assertTrue(Specification.Article.ArticleHeaders.isValidDate("Thu, 1 Jan 70 00:00:00"));         // short year.  obsolete
         assertTrue(Specification.Article.ArticleHeaders.isValidDate("Thu, 1 Jan 70 00:00"));            // no seconds

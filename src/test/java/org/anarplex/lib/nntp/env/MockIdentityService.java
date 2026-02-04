@@ -1,7 +1,9 @@
 package org.anarplex.lib.nntp.env;
 
-import org.anarplex.lib.nntp.utils.RandomNumber;
 import org.anarplex.lib.nntp.Specification;
+import org.anarplex.lib.nntp.utils.RandomNumber;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
 import java.security.MessageDigest;
@@ -10,21 +12,33 @@ import java.util.Map;
 import java.util.Set;
 
 public class MockIdentityService implements IdentityService {
+    private static final Logger logger = LoggerFactory.getLogger(MockIdentityService.class);
+
     private boolean closed;
 
     @Override
+    public Boolean requiresPassword(Subject subject) {
+        // TODO
+        return true;
+    }
+
+    /**
+     * Mock authentication.
+     * @return 0 for invalid authentication, 1 for authenticated with limited privileges, 2 for authenticated with full privileges
+     */
+    @Override
     public Long authenticate(IdentityService.Subject identity, String credentials) {
-        return 0L;
+        if (identity != null && identity.getPrincipal() != null && identity.getPrincipal().equals(credentials)) {
+            // authenticated.
+            return (identity.getPrincipal().toUpperCase().equals(identity.getPrincipal())) ? 2L : 1L;
+        } else {
+            return 0L;
+        }
     }
 
     @Override
     public boolean isValid(long token) {
-        return false;
-    }
-
-    @Override
-    public boolean authorizedToPost(long token, PersistenceService.Newsgroup newsgroup) {
-        return false;
+        return 0 < token;
     }
 
     @Override

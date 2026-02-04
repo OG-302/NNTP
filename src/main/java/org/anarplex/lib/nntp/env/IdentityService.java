@@ -7,9 +7,16 @@ import java.util.Set;
 
 public interface IdentityService extends AutoCloseable {
 
-    public interface Subject {
+    interface Subject {
         String getPrincipal();
     }
+
+    /**
+     * Some Authentication variants of RFC4643 only require the Username, no password.
+     * This method returns true if the supplied Subject requires a password, false if not, and null if no such User.
+     */
+    Boolean requiresPassword(Subject subject);
+
 
     /**
      * Authenticate authenticates the supplied identity using the supplied credentials and returns a token for
@@ -23,14 +30,6 @@ public interface IdentityService extends AutoCloseable {
      * @return true if the supplied authenticationToken is still valid, false otherwise.
      */
     boolean isValid(long token);
-
-    /**
-     * AuthorizedToPost determines whether the entity identified (and authenticated previously) by the supplied token is
-     * allowed to Post to the supplied Newsgroup.
-     * Precondition: token must be valid. i.e. (isValid(token) == true)
-     * @return true if the entity identified by the supplied token is authorized to Post to the supplied Newsgroup, false otherwise.
-     */
-    boolean authorizedToPost(long token, PersistenceService.Newsgroup newsgroup);
 
     /**
      * GetHostIdentifier returns a string that (as far as possible) uniquely identifies this host within the set of

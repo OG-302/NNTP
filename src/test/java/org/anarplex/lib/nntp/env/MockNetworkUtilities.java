@@ -1,6 +1,5 @@
 package org.anarplex.lib.nntp.env;
 
-import org.anarplex.lib.nntp.Specification;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -13,17 +12,18 @@ import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-public class MockNetworkUtilities implements NetworkUtilities {
+public class MockNetworkUtilities extends NetworkUtilities {
     private static final Logger logger = LoggerFactory.getLogger(MockNetworkUtilities.class);
 
+    private static final String NNTP_PORT_LABEL = "nntp.port";
+    private static final int DEFAULT_NNTP_PORT = 3119;
+
     public static Properties networkEnv = new Properties();
-    private static final int THREAD_POOL_SIZE = 10;
-    private static final ExecutorService executorService = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
 
-    static {
-        networkEnv.put("port", "119");
-    }
-
+    /**
+     * Constructor.
+     * Set the server listening port from properties: nntp.port
+     */
     private MockNetworkUtilities(Properties p) {
         networkEnv.putAll(p);
     }
@@ -33,53 +33,21 @@ public class MockNetworkUtilities implements NetworkUtilities {
     }
 
     @Override
-    public NetworkUtilities.ServiceManager registerService(ConnectionListener cl) {
-        return new ServiceManager(cl);
+    public NetworkUtilities.ConnectionListener registerService(ServiceProvider sp) {
+        return new ConnectionListener(sp);
     }
 
     public static class ConnectedPeerImpl extends ConnectedPeer {
-        private final Socket connection;
-        private final PersistenceService.Peer peer;
-        PrintWriter writer;
-        BufferedReader reader;
+        final PersistenceService.Peer peer;
 
-
-        protected ConnectedPeerImpl(Socket socket, PersistenceService.Peer peer) throws IOException {
-            this.connection = socket;
+        protected ConnectedPeerImpl(PersistenceService.Peer peer, BufferedReader reader, BufferedWriter writer) {
+            super(reader, writer, peer);
             this.peer = peer;
-            // wrap peer's outputStream with a PrintWriter
-            writer = new PrintWriter(
-                    new OutputStreamWriter(connection.getOutputStream(), StandardCharsets.UTF_8), // RFC-3977 requires UTF-8 encoding
-                    false    // autoflush
-            );
-            // wrap the input stream with BufferedReader to read responses line by line
-            reader = new BufferedReader(
-                    new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8)
-            );
         }
 
         @Override
-        public BufferedReader getReader() {
-            return reader;
-        }
-
-        @Override
-        public PrintWriter getWriter() {
-            return writer;
-        }
-
-        @Override
-        public void closeConnection() {
-            if (connection != null && !connection.isConnected()) {
-                try {
-                    logger.info("Client disconnected: {}", connection.getInetAddress());
-                    writer.flush();
-                    connection.close();
-                } catch (IOException e) {
-                    logger.error("Error closing connection: {}", e.getMessage());
-                    throw new RuntimeException(e);
-                }
-            }
+        public int getID() {
+            return peer.getID();
         }
 
         @Override
@@ -93,7 +61,9 @@ public class MockNetworkUtilities implements NetworkUtilities {
         }
 
         @Override
-        public void setLabel(String label) { peer.setLabel(label); }
+        public void setLabel(String label) {
+            peer.setLabel(label);
+        }
 
         @Override
         public boolean getDisabledStatus() {
@@ -117,75 +87,185 @@ public class MockNetworkUtilities implements NetworkUtilities {
 
         @Override
         public String getPrincipal() {
-            return getAddress();
+            return peer.getPrincipal();
         }
     }
 
+    /**
+     * An implementation of the connectToPeer method that uses the host and port to properties to open a socket connection.
+     * Assumes the Address field of the Peer is in the format nntp://host:port.
+     */
     @Override
-    public ConnectedPeer connectToPeer(PersistenceService.Peer peer) throws IOException {
-        ConnectedPeerImpl c = new ConnectedPeerImpl(new Socket(networkEnv.getProperty("host"), Integer.parseInt(networkEnv.getProperty("port"))), peer);
-        System.out.println("Connected to " + networkEnv.getProperty("host") + ":" + networkEnv.getProperty("port"));
-        return c;
+    public ConnectedPeer connectToPeer(PersistenceService.Peer peer)  {
+        try {
+            String NNTP_PROTOCOL = "nntp://";
+            String address = peer.getAddress();
+            if (address != null && address.startsWith(NNTP_PROTOCOL)) {
+                String[] parts = address.substring(NNTP_PROTOCOL.length()).split(":");
+                Socket socket = new Socket(parts[0], Integer.parseInt(parts[1]));
+
+                if (socket.isConnected()) {
+                    return new ConnectedPeerImpl(
+                            peer,
+                            new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8)),
+                            new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8)));
+                }
+            }
+        } catch (IOException e) {
+            logger.error("Error connecting to peer: {}", e.getMessage());
+        }
+        return null;
     }
 
 
-    private static class ServiceManager implements NetworkUtilities.ServiceManager, Runnable {
-        private ConnectionListener listener;
+    private static class ConnectionListener implements NetworkUtilities.ConnectionListener {
 
-        ServiceManager(ConnectionListener listener) {
-            this.listener = listener;
+        private final ServiceProvider serviceProvider;
+        private final int port;
+        private volatile boolean accepting = false;
+        private ServerSocket serverSocket;
+        private final ExecutorService clientPool = Executors.newCachedThreadPool();
+        private final java.util.Set<Socket> openSockets = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+        private final java.util.concurrent.atomic.AtomicInteger openConnections = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        private ConnectionListener(ServiceProvider serviceProvider) {
+            this.serviceProvider = serviceProvider;
+            String portStr = MockNetworkUtilities.networkEnv.getProperty(NNTP_PORT_LABEL, String.valueOf(DEFAULT_NNTP_PORT));
+            int p;
+            try {
+                p = Integer.parseInt(portStr);
+            } catch (NumberFormatException e) {
+               logger.error("Invalid port number: {}", portStr);
+               p = 0;
+            }
+            this.port = p;
         }
 
         @Override
         public void start() {
-            Thread thread = new Thread(this);
-            thread.start(); // Starts the new thread
+            if (accepting) return;
+            accepting = true;
+            try {
+                serverSocket = new ServerSocket(port);
+            } catch (IOException e) {
+                logger.error("Failed to start server socket on port {}", port, e);
+                accepting = false;
+                return;
+            }
+
+            Thread acceptThread = new Thread(() -> {
+                logger.info("Listening on port {}", port);
+                while (accepting) {
+                    try {
+                        Socket client = serverSocket.accept();
+                        openSockets.add(client);
+                        openConnections.incrementAndGet();
+                        clientPool.submit(() -> {
+                            try {
+                                new ClientHandler(client, serviceProvider).run();
+                            } finally {
+                                openSockets.remove(client);
+                                openConnections.decrementAndGet();
+                            }
+                        });
+                    } catch (IOException e) {
+                        if (accepting) {
+                            logger.error("Error accepting connection", e);
+                        } else {
+                            // socket closed due to shutdown/stop
+                            break;
+                        }
+                    }
+                }
+                logger.info("Listener stopped on port {}", port);
+            }, "MockNNTP-Acceptor");
+            acceptThread.setDaemon(true);
+            acceptThread.start();
         }
 
         @Override
-        public void run() {
-            // Create a thread pool to handle client connections
-            try (ServerSocket serverSocket = new ServerSocket(Integer.parseInt(networkEnv.getProperty("port")))) {
-                logger.info("Server is listening on port {}", serverSocket.getLocalPort());
-                while (true) {
-                    // Accept a new client connection
-                    Socket clientSocket = serverSocket.accept();
-                    logger.info("Client connected: {}", clientSocket.getInetAddress());
-
-                    // Handle the client in a separate thread
-                    executorService.execute(new ClientHandler(clientSocket, listener));
+        public void awaitShutdownCompletion() {
+            // Wait until shutdown/stop has been requested and all active connections have drained
+            while (true) {
+                if (!accepting && openConnections.get() == 0) {
+                    break;
                 }
-            } catch (IOException e) {
-                logger.error("Server error: {}", e.getMessage());
-            } finally {
-                executorService.shutdown();
+                try {
+                    Thread.sleep(5000);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            // Ensure client worker pool is shut down gracefully
+            clientPool.shutdown();
+            try {
+                clientPool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
             }
         }
 
         @Override
-        public void terminate() {
-            listener = null;
-            executorService.shutdown();
+        public int shutdown() {
+            // stop accepting new connections, keep existing running
+            accepting = false;
+            if (serverSocket != null && !serverSocket.isClosed()) {
+                try {
+                    serverSocket.close();
+                } catch (IOException ignored) {
+                }
+            }
+            return openConnections.get();
+        }
+
+        @Override
+        public void stop() {
+            // stop accepting and close existing connections immediately
+            shutdown();
+            synchronized (openSockets) {
+                for (Socket s : openSockets) {
+                    try {
+                        s.close();
+                    } catch (IOException ignored) {
+                    }
+                }
+                openSockets.clear();
+            }
+            clientPool.shutdownNow();
         }
     }
 
 
-    // Class to handle individual client connections
+    /**
+     * Handles client connections for a network service. This class implements runnable to allow
+     * execution in a separate thread for managing individual client connections.
+     * <p>
+     * The ClientHandler is responsible for initializing input and output streams to communicate
+     * with the connected client, and invoking the provided ConnectionListener to handle communication
+     * protocol logic.
+     * <p>
+     * The life cycle of the connection is managed within this class, which includes resource
+     * cleanup upon disconnection.
+     * <p>
+     * Thread-safety: While the ClientHandler is designed to work in multithreaded environments,
+     * it's not inherently thread-safe. External synchronization may be required if multiple threads
+     * interact with the same ClientHandler instance.
+     */
     private static class ClientHandler implements Runnable {
         private final Socket clientSocket;
-        private final ConnectionListener listener;
+        private final ServiceProvider listener;
         private final BufferedReader reader;
-        private final PrintWriter writer;
+        private final BufferedWriter writer;
 
 
-        public ClientHandler(Socket clientSocket, ConnectionListener listener) {
+        public ClientHandler(Socket clientSocket, ServiceProvider listener) {
             this.clientSocket = clientSocket;
             this.listener = listener;
             // wrap peer's outputStream with a PrintWriter
             try {
-                this.writer = new PrintWriter(
-                        new OutputStreamWriter(clientSocket.getOutputStream(), StandardCharsets.UTF_8), // RFC-3977 requires UTF-8 encoding
-                        true    // autoflush
+                this.writer = new BufferedWriter(
+                        new OutputStreamWriter(clientSocket.getOutputStream(), StandardCharsets.UTF_8) // RFC-3977 requires UTF-8 encoding
                 );
                 // wrap the input stream with BufferedReader to read responses line by line
                 this.reader = new BufferedReader(
@@ -200,20 +280,11 @@ public class MockNetworkUtilities implements NetworkUtilities {
         @Override
         public void run() {
             try {
-                listener.onConnection(new ProtocolStreams() {
+                // call the registered service provider to handle the client connection
+                listener.onConnection(new ConnectedClient(this.reader, this.writer) {
 
                     @Override
-                    public BufferedReader getReader() {
-                        return reader;
-                    }
-
-                    @Override
-                    public PrintWriter getWriter() {
-                        return writer;
-                    }
-
-                    @Override
-                    public void closeConnection() {
+                    public void close() {
                         if (!clientSocket.isClosed()) {
                             logger.info("Client disconnected: {}", clientSocket.getInetAddress());
                             try {
@@ -235,38 +306,6 @@ public class MockNetworkUtilities implements NetworkUtilities {
                 } catch (IOException e) {
                     logger.error("Error closing client connection: {}", e.getMessage());
                 }
-            }
-        }
-    }
-
-    public static class MockProtocolStreams implements NetworkUtilities.ProtocolStreams {
-        BufferedReader reader;
-        PrintWriter writer;
-
-        public MockProtocolStreams(InputStream inputStream, ByteArrayOutputStream outputStream) {
-            reader = new BufferedReader(new InputStreamReader(inputStream));
-            writer = new PrintWriter(outputStream);
-        }
-
-
-        @Override
-        public BufferedReader getReader() {
-            return reader;
-        }
-
-        @Override
-        public PrintWriter getWriter() {
-            return writer;
-        }
-
-        @Override
-        public void closeConnection() {
-            try {
-                reader.close();
-                writer.flush();
-                writer.close();
-            } catch (IOException e) {
-                throw new RuntimeException(e);
             }
         }
     }

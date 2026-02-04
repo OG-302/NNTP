@@ -2,8 +2,6 @@ package org.anarplex.lib.nntp.env;
 
 import org.anarplex.lib.nntp.Specification;
 
-import java.io.StringReader;
-
 /**
  * The PolicyService interface provides a simple API for determining whether a given article or newsgroup is allowed
  * to be posted.  Posting can be via the POST command or via IHAVE.
@@ -18,7 +16,7 @@ public interface PolicyService extends AutoCloseable {
      * @param submitter or null if the submitter is unknown or anonymous
      * @return true if article Posting by this submitter is allowed, false otherwise
      */
-    boolean isPostingAllowed(IdentityService.Subject submitter);
+    boolean isPostingAllowedBy(IdentityService.Subject submitter);
 
     /**
      * isIHaveAllowed determines whether the specified article which is being submitted via IHAVE by the specified
@@ -27,7 +25,7 @@ public interface PolicyService extends AutoCloseable {
      * @param submitter or null if the submitter is unknown or anonymous
      * @return true if the article Posting to the newsgroup is allowed, false otherwise
      */
-    boolean isIHaveTransferAllowed(IdentityService.Subject submitter);
+    boolean isIHaveTransferAllowedBy(IdentityService.Subject submitter);
 
     /**
      * isNewsgroupAllowed indicates whether the specified newsgroup is allowed or not.  If the newsgroup is allowed,

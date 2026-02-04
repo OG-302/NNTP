@@ -2,7 +2,6 @@ package org.anarplex.lib.nntp.env;
 
 import org.anarplex.lib.nntp.Specification;
 
-import java.io.Reader;
 import java.time.LocalDateTime;
 import java.util.Iterator;
 
@@ -283,7 +282,12 @@ public interface PersistenceService extends AutoCloseable {
      */
     interface Peer extends IdentityService.Subject {
         /**
-         * GetAddress returns the immutable address of this Peer.  The address is also the unique identifier for this Peer.
+         * ID is the immutable identifier for this Peer.
+         */
+        int getID();
+
+        /**
+         * GetAddress returns the immutable address of this Peer.
          *
          * @return the immutable address of this Peer
          */
@@ -303,4 +307,6 @@ public interface PersistenceService extends AutoCloseable {
         LocalDateTime getListLastFetched();
         void setListLastFetched(LocalDateTime lastFetched);
     }
+
+
 }

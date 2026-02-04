@@ -1,13 +1,23 @@
 package org.anarplex.lib.nntp;
 
-import org.anarplex.lib.nntp.env.*;
-import org.junit.jupiter.api.*;
+import org.anarplex.lib.nntp.env.MockIdentityService;
+import org.anarplex.lib.nntp.env.MockPersistenceService;
+import org.anarplex.lib.nntp.env.MockPolicyService;
+import org.anarplex.lib.nntp.env.NetworkUtilities;
+import org.anarplex.lib.nntp.utils.RandomNumber;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProtocolEngineTest {
 
@@ -26,7 +36,7 @@ class ProtocolEngineTest {
 
     @Test
     @DisplayName("RFC-3977: Initial Handshake and QUIT")
-    void testHandshakeAndQuit() throws Exception {
+    void testHandshakeAndQuit() {
         String input = "QUIT\r\n";
         ProtocolEngine engine = createEngine(input);
 
@@ -42,22 +52,22 @@ class ProtocolEngineTest {
     @DisplayName("RFC-3977: GROUP and ARTICLE by Number")
     void testGroupAndArticleFlow() throws Exception {
         // Setup data
-        Specification.NewsgroupName groupName = new Specification.NewsgroupName("comp.lang.java");
-        persistenceService.addGroup(groupName, "Java news", Specification.PostingMode.Allowed, LocalDateTime.now(), "test", false);
+        Specification.NewsgroupName groupName = new Specification.NewsgroupName("local.test.nntp.g"+ RandomNumber.generate10DigitNumber());
+        persistenceService.addGroup(groupName, "Test group", Specification.PostingMode.Allowed, LocalDateTime.now(), "test", false);
 
         Specification.MessageId mid = new Specification.MessageId("<test@postus>");
         Map<String, Set<String>> headers = new HashMap<>();
         headers.put("Newsgroups", Collections.singleton(groupName.getValue()));
         headers.put("Subject", Collections.singleton("Hello"));
-        headers.put("From", Collections.singleton("tester@example.com"));
-        headers.put("Date", Collections.singleton("Thu, 08 Jan 2026 00:01:19"));  //   Fri, 20 Dec 2024 12:00:00 +0000"
+        headers.put("From", Collections.singleton("testcase@example.com"));
+        headers.put("Date", Collections.singleton("Thu, 08 Jan 2026 00:01:19"));
         headers.put("Message-ID", Collections.singleton(mid.getValue()));
         headers.put("Path", Collections.singleton("host!not-for-email"));
 
         persistenceService.getGroupByName(groupName).addArticle(mid, new Specification.Article.ArticleHeaders(headers), "Body content", false);
 
         // Sequence: Select group -> Get article 1 -> QUIT
-        String input = "GROUP comp.lang.java\r\nARTICLE 1\r\nQUIT\r\n";
+        String input = "GROUP "+groupName.getValue() +"\r\nARTICLE 1\r\nQUIT\r\n";
         ProtocolEngine engine = createEngine(input);
         engine.start();
 
@@ -70,7 +80,7 @@ class ProtocolEngineTest {
 
     @Test
     @DisplayName("RFC-3977: 411 No Such Newsgroup")
-    void testMissingGroup() throws Exception {
+    void testMissingGroup() {
         String input = "GROUP non.existent.group\r\nQUIT\r\n";
         ProtocolEngine engine = createEngine(input);
         engine.start();
@@ -81,7 +91,7 @@ class ProtocolEngineTest {
 
     @Test
     @DisplayName("RFC-3977: DATE Command")
-    void testDateCommand() throws Exception {
+    void testDateCommand() {
         String input = "DATE\r\nQUIT\r\n";
         ProtocolEngine engine = createEngine(input);
         engine.start();
@@ -92,8 +102,9 @@ class ProtocolEngineTest {
     }
 
     private ProtocolEngine createEngine(String clientInput) {
-        InputStream is = new ByteArrayInputStream(clientInput.getBytes(StandardCharsets.UTF_8));
-        NetworkUtilities.ProtocolStreams streams = new MockNetworkUtilities.MockProtocolStreams(is, serverOutput);
-        return new ProtocolEngine(persistenceService, identityService, policyService, streams);
+        BufferedReader input = new BufferedReader(new StringReader(clientInput));
+        NetworkUtilities.ConnectedClient connectedClient;
+        connectedClient = new NetworkUtilities.ConnectedClient(input, new BufferedWriter(new OutputStreamWriter(serverOutput, StandardCharsets.UTF_8)));
+        return new ProtocolEngine(persistenceService, identityService, policyService, connectedClient);
     }
 }
