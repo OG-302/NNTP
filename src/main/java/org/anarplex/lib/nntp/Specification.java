@@ -5,10 +5,9 @@ import org.apache.commons.lang3.StringUtils;
 import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
 import java.time.DateTimeException;
+import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
-
-import static org.anarplex.lib.nntp.utils.DateAndTime.parseRFC3977Date;
 
 public class Specification {
 
@@ -21,8 +20,10 @@ public class Specification {
     public static final String HeaderNameFieldDelimiter = ": ";
     public static final String HeaderValueFieldSeparator = ", ";
     public static final String CRLF = "\r\n";
-    public static final String DOT_CRLF = "."+CRLF;
-    public static final String CRLF_DOT_CRLF = CRLF+DOT_CRLF;
+    public static final char DOT = '.';
+    public static final String DOT_CRLF = DOT+CRLF;
+    public static final String CRLF_DOT_CRLF = CRLF+DOT+CRLF;
+    public static final String WHITE_SPACE = "\\s+";   // e.g. space between response fields
 
     /*
      * NNTP Commands according to RFC3977
@@ -292,9 +293,131 @@ public class Specification {
         }
     }
 
+    public abstract static class Newsgroup {
+        private final NewsgroupName name;  // immutable identifier of a newsgroup
+        private String description;
+        private PostingMode postingMode;
+        private String createdBy;
+        private Instant createdAt;
+
+        protected Newsgroup(NewsgroupName name, String description, PostingMode postingMode, String createdBy) {
+            this.name = name;
+            setDescription(description);
+            this.postingMode = postingMode;
+            setCreatedBy(createdBy);
+        }
+
+        /**
+         * GetName returns the immutable and normalized Newsgroup's name
+         */
+        public NewsgroupName getName() {
+            return name;
+        }
+
+        /**
+         * Retrieves the posting mode of the newsgroup, which dictates the permissions and rules regarding how articles
+         * can be posted to this newsgroup.  This library does enforce PostingMode.Allowed and PostingMode.Prohibited in
+         * that such are obeyed when an article is submitted via the POST command.  However, it is left upto implementations
+         * to determine the behavior for PostingMode.Moderated.
+         */
+        public PostingMode getPostingMode() {
+            return postingMode;
+        }
+
+        /**
+         * Changes the Posting Mode of this newsgroup.  Newsgroups with Prohibited posting mode do not allow any article
+         * to be added to them.  Newsgroups with Allowed or Moderated posting mode allow articles to be added to them.
+         * The Posting Mode change takes effect only for subsequently added articles.  It does not retroactively change
+         * existing articles of the newsgroup.
+         */
+        protected void setPostingMode(PostingMode postingMode) {
+            this.postingMode = postingMode;
+        }
+
+        public String getDescription() {
+            return description;
+        }
+
+        /**
+         * While not restricted by RFC-3977 the supplied string should be filtered down to reasonable values
+         * to prevent injection attacks.  Here, only alphanumeric characters and space are allowed to be saved in the
+         * description string. The null string is also acceptable.
+         */
+        void  setDescription(String description) {
+            if (description == null) {
+                this.description = null;
+            } else {
+                this.description = description.replaceAll("[^a-zA-Z0-9 ]", "");
+            }
+        }
+
+        public String getCreatedBy() {
+            return createdBy;
+        }
+
+        /**
+         * While not restricted by RFC-3977 the supplied string should be filtered down to reasonable values
+         * to prevent injection attacks.  Here, only alphanumeric characters, @, '.' and space are allowed to be saved
+         * in the createdBy string. The null string is also acceptable.
+         */
+        void setCreatedBy(String createdBy) {
+            if (createdBy == null) {
+                this.createdBy = null;
+            } else {
+                this.createdBy = createdBy.replaceAll("[^da-zA-Z0-9@. ]", "");
+            }
+        }
+
+        /**
+         * The time this record was added to this datastore.  Only set by the constructor.
+         */
+        public Instant getCreatedAt() {
+            return createdAt;
+        }
+
+        /**
+         * Metrics are those pertaining to Articles with assigned ArticleNumbers in a newsgroup.  In this library these
+         * articles and newsgroups are referred to as Published.
+         */
+        protected static class Metrics {
+            private final int numPublishedArticles;
+            private final ArticleNumber lowestArticleNumber;
+            private final ArticleNumber highestArticleNumber;
+
+            Metrics(int numPublishedArticles, ArticleNumber lowestArticleNumber, ArticleNumber highestArticleNumber) {
+                this.numPublishedArticles = numPublishedArticles;
+                this.lowestArticleNumber = lowestArticleNumber;
+                this.highestArticleNumber = highestArticleNumber;
+            }
+            public int numPublishedArticles() {
+                return numPublishedArticles;
+            }
+            public ArticleNumber getLowestArticleNumber() {
+                return lowestArticleNumber;
+            }
+            public ArticleNumber getHighestArticleNumber() {
+                return highestArticleNumber;
+            }
+            public int numLowestArticle() {
+                return (lowestArticleNumber != null ? lowestArticleNumber.getValue() : org.anarplex.lib.nntp.Specification.NoArticlesLowestNumber);
+            }
+            public int numHighestArticle() {
+                return (highestArticleNumber != null ? highestArticleNumber.getValue() : org.anarplex.lib.nntp.Specification.NoArticlesHighestNumber);
+            }
+        }
+
+        /**
+         * Returns metrics related to PublishedArticles within the group (i.e. Articles which have been assigned
+         * distinct ArticleNumbers).
+         */
+        abstract Metrics getMetrics();
+    }
+
     /**
      * Newsgroup name.
-     * All newsgroup names are case-insensitive and are converted to lower case.
+     * Represents a valid NNTP newsgroup name.
+     * According to RFC 3977, a newsgroup name must consist of dot-separated components,
+     * All newsgroup name comparisons ignore case and all names are converted to lower case for consistency.
      */
     public static class NewsgroupName implements Serializable {
         private final static int NewsgroupNameMaxLen = 1024;  // (practical limit.  not from spec)
@@ -364,8 +487,6 @@ public class Specification {
                     && !name.contains("..")                     // does not contain two consecutive dots
                     && name.matches("^[a-zA-Z0-9\\-+_.]+$");
         }
-
-
     }
 
     public enum PostingMode {
@@ -393,6 +514,29 @@ public class Specification {
         public String toString() {
             return  Integer.toString(getValue());
         }
+
+        public char toChar() {
+            return switch (this) {
+                case Allowed -> 'y';
+                case Moderated -> 'm';
+                // case Prohibited
+                default -> 'n';
+            };
+        }
+    }
+
+    /**
+     * Identifies how the StoredArticle was received.
+     */
+    public enum ArticleSource {
+        Posting,                    // article was submitted by a client using the POST command
+        IHaveTransfer,              // article was submitted by a client using the IHAVE command
+        NewsgroupSynchronization   // this article was retrieved from a Peer as part of the newsgroup's Synchronization
+    }
+
+    public enum NewsgroupSource {
+        ArticleReference,
+        PeerQuery
     }
 
     public static class MessageId implements Comparable<MessageId>, Serializable {
@@ -449,7 +593,7 @@ public class Specification {
     }
 
     public static class ArticleNumber implements Serializable {
-        final int number;
+        final Integer number;
 
         static public class InvalidArticleNumberException extends Exception {
             public InvalidArticleNumberException(String message) {
@@ -458,9 +602,25 @@ public class Specification {
         }
 
         public ArticleNumber(int number) throws InvalidArticleNumberException {
-            this.number = number;
-            if (!isValid(number)) {
-                throw new InvalidArticleNumberException("Invalid article number: " + number);
+            if (isValid(number)) {
+                this.number = number;
+            } else {
+                this.number = null;
+                throw new InvalidArticleNumberException("Invalid article number {} " + number);
+            }
+        }
+
+        public ArticleNumber(String number) throws InvalidArticleNumberException {
+            try {
+                int n = Integer.parseInt(number);
+                if (isValid(n)) {
+                    this.number = n;
+                } else {
+                    this.number = null;
+                    throw new InvalidArticleNumberException("Invalid article number: " + n);
+                }
+            } catch (NumberFormatException e) {
+                throw new InvalidArticleNumberException("Invalid article number {} " + number);
             }
         }
 
@@ -475,8 +635,7 @@ public class Specification {
         @Override
         public final boolean equals(Object o) {
             if (!(o instanceof ArticleNumber that)) return false;
-
-            return number == that.number;
+            return Objects.equals(number, that.number);
         }
 
         @Override
@@ -525,16 +684,16 @@ public class Specification {
 
     public static class Article implements Serializable {
         protected final MessageId messageId;
-        protected final ArticleHeaders headers;
-        protected final String body;
+        protected ArticleHeaders headers;
+        protected String body;
 
-        protected Article(MessageId messageId, ArticleHeaders headers, String body) {
+        public Article(MessageId messageId, ArticleHeaders headers, String body) throws Article.InvalidArticleFormatException {
             this.messageId = messageId;
             this.headers = headers;
             this.body = body;
 
             if (headers == null || body == null) {
-                throw new IllegalArgumentException("Article must have headers and body");
+                throw new IllegalArgumentException("StoredArticle must have headers and body");
             }
 
             // add :lines header field if not present
@@ -544,6 +703,14 @@ public class Specification {
             // add :bytes header field if not present
             headers.headerFields.putIfAbsent(Specification.NNTP_Standard_Article_Headers.Bytes.getValue(),
                     Set.of(String.valueOf(body.getBytes(StandardCharsets.UTF_8).length)));
+        }
+
+        /**
+         * This is used by derivative classes to create an StoredArticle based on a MessageId, and then lazy load the headers
+         * and body if necessary
+         */
+        protected Article(MessageId messageId) {
+            this.messageId = messageId;
         }
 
         public ArticleHeaders getAllHeaders() {
@@ -559,7 +726,7 @@ public class Specification {
         }
 
         /**
-         * When the stream-representation of the Article is invalid.
+         * When the stream-representation of the StoredArticle is invalid.
          */
         static public class InvalidArticleFormatException extends Exception {
             public InvalidArticleFormatException(String message) {
@@ -567,21 +734,17 @@ public class Specification {
             }
         }
 
-        public static boolean isInvalidBody(String body) {
-            return body == null || body.endsWith(Specification.CRLF_DOT_CRLF);
-        }
-
         public MessageId getMessageId() {
                 return messageId;
         }
 
         /**
-         * Writes the entire Article as a stream following the XOVER/OVER prescription for ordering of header fields,
+         * Writes the entire StoredArticle as a stream following the XOVER/OVER prescription for ordering of header fields,
          * and terminates the stream with a single dot-line.
          */
         public String toString() {
-            // write all header fields
-            return getAllHeaders().toString() +
+            return  // write all header fields
+                    getAllHeaders() +
                     // write a separator line
                     Specification.CRLF +
                     // write the body
@@ -666,6 +829,9 @@ public class Specification {
             }
 
             public ArticleHeaders(Map<String, Set<String>> headerFields) throws InvalidArticleHeaderException {
+                if (headerFields == null) {
+                    throw new InvalidArticleHeaderException("headerFields cannot be null");
+                }
                 Map<String, Set<String>> caseInsensitiveHeaders = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
                 caseInsensitiveHeaders.putAll(headerFields);
                 this.headerFields = validateHeaderFields(caseInsensitiveHeaders);
@@ -719,7 +885,7 @@ public class Specification {
             }
 
             /**
-             * Check if the header fields are valid.  A valid header field set MUST contain all the Standard Article Headers,
+             * Check if the header fields are valid.  A valid header field set MUST contain all the Standard StoredArticle Headers,
              * and those fields MUST be valid, according to the various methods defined below.  As for non-standard headers,
              * those must conform to basic syntax and formatting rules (see also below).
              * This method will return a normalised version of the header fields. i.e. one where a multivalued
@@ -862,8 +1028,8 @@ public class Specification {
                         && !name.isEmpty()                      // not empty
                         && (!name.contains(" ") || name.length() == name.trim().length())    // no leading or trailing spaces (because they're of no use and insidiously deceptive)
                         && (!name.contains(":")                 // must not contain a colon (except for :bytes and :lines)
-                        || name.contains(NNTP_Standard_Article_Headers.Bytes.getValue())
-                        || name.contains(NNTP_Standard_Article_Headers.Lines.getValue()))
+                            || name.contains(NNTP_Standard_Article_Headers.Bytes.getValue())
+                            || name.contains(NNTP_Standard_Article_Headers.Lines.getValue()))
                         && StringUtils.isAsciiPrintable(name);  // all characters must be printable ASCII
             }
 
@@ -898,7 +1064,7 @@ public class Specification {
             public static boolean isValidDate(String date) {
                 try {
                     if (date != null && !date.isEmpty()) {
-                        parseRFC3977Date(date);
+                        Instant _ = Utilities.DateAndTime.parseRFC3977Date(date);
                         return true;
                     }
                 } catch (DateTimeException e) {
@@ -1065,11 +1231,7 @@ public class Specification {
 
                 // Additional validation: ensure it's not just dots/hyphens/underscores
                 // Must contain at least one alphanumeric character
-                if (!component.matches(".*[a-zA-Z0-9].*")) {
-                    return false;
-                }
-
-                return true;
+                return component.matches(".*[a-zA-Z0-9].*");
             }
 
             /**
@@ -1111,7 +1273,7 @@ public class Specification {
      * A ProtoArticle is the raw article read in from a stream.
      * It is not validated (e.g. it may be missing required header fields, etc).
      * It is an internal representation of the streamed data alone, which may or may not be what we regard as a valid
-     * Article object.
+     * StoredArticle object.
      * All header field names (map keys) are translated to lowercase.
      * The body text can be empty but is never null.
      */
@@ -1146,7 +1308,7 @@ public class Specification {
             String bodyText = articleContent.substring(headerBodySeparator + 4);    // 4 == '\r\n\r\n'.length()'
 
             // Validate the body text
-            if (Specification.Article.isInvalidBody(bodyText)) {
+            if (!bodyText.endsWith(Specification.CRLF_DOT_CRLF)) {
                 throw new Specification.Article.InvalidArticleFormatException("Invalid article format - invalid body");
             }
 

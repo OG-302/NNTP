@@ -1,4 +1,4 @@
-package org.anarplex.lib.nntp.utils;
+package org.anarplex.lib.nntp;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -143,7 +143,7 @@ public class WildMatcher {
             }
         }
 
-        if (current.length() > 0) {
+        if (!current.isEmpty()) {
             parts.add(current.toString());
         }
 

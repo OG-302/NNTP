@@ -1,4 +1,4 @@
-package org.anarplex.lib.nntp.utils;
+package org.anarplex.lib.nntp;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -27,9 +27,8 @@ public class ResultSetIterator<T> implements Iterator<T>, AutoCloseable {
      * Constructs an iterator from a ResultSet and a mapper function.
      * @param resultSet the JDBC ResultSet (should not be null)
      * @param mapper maps a ResultSet row to an object of type T
-     * @throws SQLException if a database access error occurs
      */
-    public ResultSetIterator(ResultSet resultSet, ResultSetMapper<T> mapper) throws SQLException {
+    public ResultSetIterator(ResultSet resultSet, ResultSetMapper<T> mapper)  {
         this.resultSet = resultSet;
         this.mapper = mapper;
         fetchNext();    // Prime the first element

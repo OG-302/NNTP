@@ -1,27 +1,41 @@
-package org.anarplex.lib.nntp.env;
+package org.anarplex.lib.nntp;
 
-import org.anarplex.lib.nntp.Specification;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.*;
 
-public abstract class NetworkUtilities {
+/**
+ * The NetworkService class abstracts underlying network-related operations. Concrete implementations of this class
+ * define specific functionalities based on the underlying environment, platform, network transport mechanism, and
+ * libraries being used.
+ * <p/>
+ * This class is designed to facilitate isolating network communication concerns from higher-level protocol
+ * logic, allowing the ProtocolEngine and similar components to function independently of specific network
+ * implementations.
+ * <p/>
+ * Key Responsibilities:
+ * - Handling callbacks when new connections from clients are established, and
+ * - Establishing connections to peer servers for synchronization purposes.
+ */
+public abstract class NetworkService {
 
-    private static final Logger logger = LoggerFactory.getLogger(NetworkUtilities.class);
+    private static final Logger logger = LoggerFactory.getLogger(NetworkService.class);
 
     /**
-     * ProtocolStreams represents a communication pathway either between:
-     * a) Clients and the NNTP Protocol Engine, or
+     * ProtocolStreams represents a communication pathway between:
+     * a) Clients and the NNTP Protocol Engine, and
      * b) A Peer Synchronizer and other NNTP Peers.
-     * This class is a base class for both ConnectedClient and ConnectedPeer (see further below).
+     * This class is a base class for both ConnectedClient and ConnectedPeer (see below).
      */
     public static abstract class ProtocolStreams {
-        protected BufferedWriter writer;
-        protected BufferedReader reader;
+        BufferedWriter writer;
+        BufferedReader reader;
+
 
         ProtocolStreams(BufferedReader reader, BufferedWriter writer) {
             this.reader = reader;
@@ -60,18 +74,29 @@ public abstract class NetworkUtilities {
         }
 
         /**
-         * Returns the next line of text from the input stream or null if an error occurs.
+         * Returns the next line of text from the input stream or null if an error occurs.  Upon error, the
+         * connection is closed.
          */
-        public String readLine() {
+        public String readNextLine() {
             if (reader != null) {
                 try {
-                    return reader.readLine();
+                    return currentLine = reader.readLine();
                 } catch (IOException e) {
                     close();
                 }
             }
             return null;
         }
+
+        /**
+         * Returns the entire current line being read.
+         */
+        public String getCurrentLine() {
+            return currentLine;
+        }
+
+        // the current line being read
+        private String currentLine;
 
         /**
          * Writes a formatted string to the writer using the specified format string and arguments.
@@ -93,45 +118,43 @@ public abstract class NetworkUtilities {
         }
 
         /**
-         * Read from the input stream until a single dot-line is encountered, then return the entire content with CRLFs
-         * as a string except the final dot-line.
-         * This function will unstuff dot-stuffed lines and include them in the result.
-         * Returns null if an error occurs.
+         * Reads lines from the input stream until a single dot-line is encountered (CRLF+DOT+CRLF), then returns the
+         * entire content as a list of text lines.
+         * Does not unstuff dot-stuffed lines.
+         * If an I/O error occurs during reading, the error is logged, the connection is closed, and an empty list
+         * is returned.
          */
-        public String readUntilDotLine() {
+        public List<String> readList() {
+            List<String> result = new ArrayList<>();
             if (reader != null) {
-                StringBuilder result = new StringBuilder();
                 String line;
-                try {
-                    while ((line = reader.readLine()) != null) {
-                        // Check if the line begins with a dot
-                        if (line.startsWith(".")) {
-                            if (line.length() > 1) {
-                                if (line.charAt(1) == '.') {
-                                    // dot-stuffed line.  remove the first (escaping) dot and keep the rest
-                                    result.append(line.substring(1)).append(Specification.CRLF);
-                                } else {
-                                    logger.error("Protocol error.  Unparsable line encountered: {}.  Closing connection.", line);
-                                    close();
-                                }
-                            } else {
-                                // dot-line encountered so end the reading
-                                return result.toString();
-                            }
-                        } else {
-                            result.append(line).append(Specification.CRLF);
-                        }
+
+                while ((line = readNextLine()) != null) {
+                    if (line.length() == 1 && line.charAt(0) == Specification.DOT) {
+                        // dot-line encountered so end the reading
+                        break;
                     }
-                } catch (IOException e) {
-                    logger.error("Error reading from client", e);
-                    close();
+                    result.add(line.trim());
                 }
             }
-            return null;
+            return result;
+        }
+
+        /**
+         * Reads lines from the input stream until a single dot-line is encountered (CRLF+DOT+CRLF), then returns the
+         * entire content as a single string.
+         * Does not unstuff dot-stuffed lines.
+         * If an I/O error occurs during reading, the error is logged, the connection is closed, and an empty list
+         * is returned.
+         */
+        public String readStream() {
+            List<String> lines = readList();
+            return String.join(Specification.CRLF, lines) + Specification.CRLF;
         }
 
         /**
          * Sends a dot-line (.\r\n) to the output stream.
+         * If an I/O error occurs during writing, the error is logged, and the connection is closed.
          */
         public void sendDotLine() {
             if (writer != null) {
@@ -147,6 +170,7 @@ public abstract class NetworkUtilities {
 
         /**
          * Flushes the output stream.
+         * If an I/O error occurs during flushing, the error is logged, and the connection is closed.
          */
         public void flush() {
             if (writer != null) {
@@ -162,52 +186,55 @@ public abstract class NetworkUtilities {
 
     /*
      * -----------------------------------------------------------------------------------------------------------------
-     * The interfaces etc. below are for use by the Protocol Engine (i.e., as a service) to listen for incoming connections.
+     * The Protocol Engine uses the interfaces below to set up a listener for incoming connections.
      * -----------------------------------------------------------------------------------------------------------------
      */
 
     /**
-     * This method is to be implemented by concrete implementations of the NetworkUtilities class.  Those implementations
-     * will vary depending on the underlying network transport mechanism and network libraries used.  This method allows
-     * such details to be isolated from the ProtocolEngine.
-     * This method registers a callback listener (a ServiceProvider) which SHOULD BE called whenever a new connection
-     * from a client is established with the NNTP Server.
+     * This method registers a callback for servicing incoming connections and returns an interface to manage the
+     * callback's lifecycle.
+     * The callback listener's onConnection() method is to be called whenever a new connection from a client is
+     * established with the NNTP Server.
      */
     public abstract ConnectionListener registerService(ServiceProvider serviceProvider);
 
     /**
-     * The ServiceProvider interface defines a callback method which is invoked when a new connection is established.
+     * The ServiceProvider interface defines a callback method which is invoked when a new connection is established with the NNTP service.
      */
     public interface ServiceProvider {
         /**
-         * Invoked by a NetworkUtilities implementation when a client establishes a new connection.
-         * The implementation of this method is to process the input stream according to the NNTP Protocol and send
-         * responses to the output stream.  This processing will be done using the calling thread.  Hence, the
-         * NetworkUtilities should assign a worker thread for this call.
-         * When the method returns, it is because either the connection with the client has been
-         * terminated by the client, a network error occurred, or a server-side error was encountered.
+         * Invoked by a NetworkService implementation when a client establishes a new connection.
+         * The implementation of this method (ultimately the ProtocolEngine) will process the stream of NNTP requests
+         * arriving on the input stream and send responses to the output stream, according to the NNTP Protocol.
+         * The method does not return until the entire NNTP dialog session between client and server has been completed.
+         * Thus, the calling thread will be occupied for the duration of the session, and therefore the implementation
+         * should assign a worker thread for this call.
+         * This method returns when either the connection with the client has been terminated by the client, a network
+         * error occurred, or a server-side error was encountered.
          */
         void onConnection(ConnectedClient client);
     }
 
     /**
-     * The ConnectionManager interface provides a standardized and abstract way to manage the network listener.
+     * The ConnectionListener interface provides a standardized and abstract way to manage the lifecycle of the connection
+     * listener.  These methods must be implemented by NetworkService implementations.
      */
     public interface ConnectionListener {
         /**
-         * Signals that the listener should begin listening for incoming connections and dispatch them to the registered
-         * ServiceProvider in their own worker thread.
+         * Indicates to the NetworkService implementation that the service provider is ready to process incoming
+         * requests from NNTP clients.
          */
         void start();
 
         /**
-         * Prevents new connections from being accepted but allows existing connections to continue to be processed.
-         * Returns the number of connections currently open.
+         * Indicates to the NetworkService implementation that new connection requests should be rejected but to allow
+         * existing connections to continue uninterrupted.
+         * @return the number of connections currently open
          */
         int shutdown();
 
         /**
-         * Blocks the current thread and waits until the listener has been properly instructed to shut down.
+         * Blocks until all connections has been closed.
          * This method is typically called after invoking the {@link #shutdown()} or {@link #stop()} methods
          * to ensure that all ongoing processes, such as handling of existing connections, have been completed
          * prior to termination.
@@ -217,7 +244,7 @@ public abstract class NetworkUtilities {
         void awaitShutdownCompletion();
 
         /**
-         * Prevents new connections from being accepted and immediately closes all existing connections.
+         * Indicates that connection listening should be terminated and all existing connections closed immediately.
          */
         void stop();
 
@@ -227,33 +254,35 @@ public abstract class NetworkUtilities {
      * A convenience class which extends the notion of an NNTP Client connected via a bidirectional network stream to
      * the NNTP Protocol Engine.
      * This class provides convenience methods for sending and receiving NNTP responses.
-     * If a network read or write error occurs, the object invokes close() which prevents further communication with the
-     * client.  The status of the object can be checked using the isConnected() method.
+     * If a network read or write error occurs, close() is invoked which prevents further communication with the (once)
+     * connected client.  The status of the connection can be checked using the isConnected() method.
      */
     public static class ConnectedClient extends ProtocolStreams {
+        private final IdentityService.Subject subject;    // defines who we are connected to
 
         /**
          * Constructs a new ConnectedClient instance with the specified input and output streams.
          */
-        public ConnectedClient(BufferedReader reader, BufferedWriter writer) {
+        ConnectedClient(BufferedReader reader, BufferedWriter writer, IdentityService.Subject subject) {
             super(reader, writer);
+            this.subject = subject;
+        }
+
+        IdentityService.Subject getSubject() {
+            return subject;
         }
 
         /**
          * SendResponse writes a response to the response stream.
-         * If sending a 205, then the connection is immediately closed.
+         * If sending a 205 response, then the connection is immediately closed.
          */
         public void sendResponse(Specification.NNTP_Response_Code code, String... args) {
             if (writer != null) {
-                if (code.getCode() < 400) {
-                    logger.debug("Sending response: {} {}", code, Arrays.toString(args));
-                } else  {
-                    logger.warn("Sending response: {} {}", code, Arrays.toString(args));
-                }
+                logger.info("Sending response: {} {}", code, Arrays.toString(args));
                 printf("%s %s\r\n", code.getCode(), (args != null ? String.join(" ", args) : ""));
                 flush();
                 if (Specification.NNTP_Response_Code.Code_205.equals(code)) {
-                    // when sending a 205 response, close the connection immediately
+                    // after sending a 205 response, the server is to close the connection immediately
                     close();
                 }
             }
@@ -263,28 +292,33 @@ public abstract class NetworkUtilities {
 
     /*
      * -----------------------------------------------------------------------------------------------------------------
-     * The interfaces etc. below are for use by the PeerSynchronizer to connect to NNTP Peers.
+     * The NewsgroupSynchronizer uses the interfaces below to connect to NNTP Peers.
      * -----------------------------------------------------------------------------------------------------------------
      */
 
     /**
-     * Connects to the specified Peer using supplied properties and returns a ProtocolStream for communication or null if connection failed.
-     * This is used by the PeerSynchronizer to establish a connection to a peer.
+     * Connects to the specified Peer and returns a ProtocolStream for communication or null if connection failed.
+     * This is used by the NewsgroupSynchronizer to establish a connection to a peer.
      */
     abstract ConnectedPeer connectToPeer(PersistenceService.Peer peer);
 
     /**
-     * A convenience class which extends the notion of an NNTP Peer connected via a bidirectional network stream typically
-     * from a Peer Synchronizer, and which is also represented by a {@code PersistenceService.Peer}.
+     * A convenience class which extends the notion of an NNTP Peer as a persisted entity represented by
+     * {@code PersistenceService.Peer} to a Peer which is also connected via bidirectional network protocol streams to
+     * that entity.
      * This class provides methods to communicate with the peer, exchange commands, and process responses.
-     * It also implements mechanisms to handle and cache server capabilities.
+     * It also implements mechanisms to handle and cache the NNTP capabilities being offered by the connected peer.
      * This class extends {@code ProtocolStreams} and implements {@code PersistenceService.Peer}.
-     * It is designed to be subclassed for concrete implementations.
+     * It is designed to be subclassed by users of this library.
      */
-    public abstract static class ConnectedPeer extends ProtocolStreams implements PersistenceService.Peer {
+    public static class ConnectedPeer extends ProtocolStreams {
+        private final PersistenceService.Peer peer;
+        private Set<String> capabilities = null;
 
         protected ConnectedPeer(BufferedReader reader, BufferedWriter writer, PersistenceService.Peer peer) {
             super(reader, writer);
+            this.peer = peer;
+
             // check that the Peer is properly initialized
             // expecting a 200 welcome code to be waiting in the response buffer
             Specification.NNTP_Response_Code responseCode = getResponseCode();
@@ -300,11 +334,12 @@ public abstract class NetworkUtilities {
                     break;
                 case Code_502: // Service permanently unavailable
                     logger.error("Peer {} returned 502 response code.  Connection permanently unavailable.  Marking peer as disabled", peer.getLabel());
-                    peer.setDisabledStatus(true);
+                    // mark the peer as disabled
+                    setDisabledStatus(true);
                     close();
                     break;
                 default:
-                    logger.error("Error connecting to peer {}.  Closing connection.", getLabel());
+                    logger.error("Error connecting to peer {}.  Got response code {}.  Closing connection.", getLabel(), responseCode);
                     close();
             }
 
@@ -314,10 +349,29 @@ public abstract class NetworkUtilities {
             }
         }
 
+        PersistenceService.Peer getPeer() {
+            return peer;
+        }
+
+        /**
+         * Close the network connection with the peer, gracefully if possible.
+         */
         public void close() {
             if (isConnected()) {
                 // gracefully terminate connection with peer
                 sendCommand(Specification.NNTP_Request_Commands.QUIT);
+                // check on peer's response to QUIT command
+                Specification.NNTP_Response_Code responseCode = getResponseCode();
+                if (Specification.NNTP_Response_Code.Code_205.equals(responseCode)) {
+                    // 205 response codes indicate that the server is closing the connection
+                    logger.debug("Successfully ended session with peer {}", getLabel());
+                } else {
+                    logger.warn("Got response code {} while ending session with peer {}.", responseCode, getLabel());
+                    if (Specification.NNTP_Response_Code.Code_502.equals(responseCode)) {
+                        setDisabledStatus(true);
+                    }
+
+                }
             }
             super.close();
         }
@@ -326,25 +380,32 @@ public abstract class NetworkUtilities {
          * Send the supplied NNTP command to this peer, possibly including optional arguments.
          */
         public void sendCommand(Specification.NNTP_Request_Commands nntpRequestCommand, String... args) {
+            logger.debug("Sending command: {} {}", nntpRequestCommand, Arrays.toString(args));
             printf("%s %s\r\n", nntpRequestCommand.getValue(), (args != null ? String.join(" ", args) : ""));
             flush();
         }
 
         /**
          * Fetch the next line of text from the peer and interpret it as an NNTP response code.
-         * If a 400 response is encountered, the connection will be closed.
+         * If a 400 or 205 response code is encountered, the connection will be closed.
+         * If a 502 response code is encountered, the peer will be marked as disabled and the connection closed.
          * If the response code is not recognized, then null is returned.
          */
         public Specification.NNTP_Response_Code getResponseCode() {
-            String responseLine = readLine();
+            String responseLine = readNextLine();
             if (responseLine != null) {
                 String[] parts = responseLine.trim().split("\\s+");
                 int part0 = Integer.parseInt(parts[0]);
                 Specification.NNTP_Response_Code responseCode = Specification.NNTP_Response_Code.findByCode(part0);
+                // analyze the response code for generic situations
                 if (Specification.NNTP_Response_Code.Code_400.equals(responseCode)) {
                     super.close();    // close the connection (without sending QUIT) if a 400 response code is encountered as per RFC.
                 } else if (Specification.NNTP_Response_Code.Code_205.equals(responseCode)) {
                     // 205 response codes indicate that the server is closing the connection.  we should do the same.
+                    super.close();
+                } else if (Specification.NNTP_Response_Code.Code_502.equals(responseCode)) {
+                    // 502 response codes indicate that the server is permanently unavailable.  mark peer as disabled.
+                    setDisabledStatus(true);
                     super.close();
                 }
                 return responseCode;
@@ -354,14 +415,24 @@ public abstract class NetworkUtilities {
 
         /**
          * Returns true if the peer supports the specified capability.
+         * Comparison is case-insensitive and ignores hyphens and underscores.
          */
         public boolean hasCapability(Specification.NNTP_Server_Capabilities capability) {
             getCapabilities(false);
-            return isConnected() && capabilities.contains(capability.toString().toLowerCase());
+            if (!isConnected() || capabilities == null) return false;
+
+            // Normalize token by removing hyphens/underscores and lowercasing for robust comparison
+            String required = capability.toString().replace("-", "").replace("_", "").toLowerCase();
+            for (String c : capabilities) {
+                String normalized = (c == null ? "" : c).replace("-", "").replace("_", "").toLowerCase();
+                if (normalized.equals(required)) return true;
+            }
+            return false;
         }
 
         /**
          * Ask the peer for its capabilities and cache the result.
+         * Don't assume that all returned capabilities are defined by the NNTP specification. The Peer may return private extensions.
          */
         void getCapabilities(boolean forceRefresh) {
             if (reader != null && writer != null) {
@@ -370,39 +441,69 @@ public abstract class NetworkUtilities {
                     capabilities = new HashSet<>();
 
                     sendCommand(Specification.NNTP_Request_Commands.CAPABILITIES);
-
                     if (Specification.NNTP_Response_Code.Code_101.equals(getResponseCode())) {
                         // peer responded with a 101 code indicating that it supports the CAPABILITIES command
-                        String line = readUntilDotLine();
-
-                        for (String c : line.split(Specification.CRLF)) {
-                            capabilities.add(c.trim().toLowerCase());
-                        }
+                        List<String> response = readList();
+                        capabilities = Set.copyOf(response);
                     }
                 }
             }
         }
 
-        private Set<String> capabilities = null;
+        public int getID() {
+            return peer.getID();
+        }
+
+        public String getAddress() {
+            return peer.getAddress();
+        }
+
+        public String getLabel() {
+            return peer.getLabel();
+        }
+
+        public void setLabel(String label) {
+            peer.setLabel(label);
+        }
+
+        public boolean isDisabled() {
+            return peer.isDisabled();
+        }
+
+        public void setDisabledStatus(boolean disabled) {
+            peer.setDisabledStatus(disabled);
+        }
+
+        public Instant getListLastFetched() {
+            return peer.getListLastFetched();
+        }
+
+        public void setListLastFetched(Instant lastFetched) {
+            peer.setListLastFetched(lastFetched);
+        }
+
+        public String getPrincipal() {
+            return peer.getPrincipal();
+        }
     }
 
     /**
      * A cache for managing connections to peers of the NNTP (Network News Transfer Protocol).
      * This class handles creating, caching, and removing peer connections, ensuring that a connection
      * to a peer is reused if it is still valid and properly cleaned up when no longer needed.
-     * The class interacts with {@code NetworkUtilities} to establish connections and determine the
+     * The class interacts with {@code NetworkService} to establish connections and determine the
      * availability of a peer. It also respects the NNTP protocol's response codes to handle
      * connectivity states appropriately.
      */
     public static class PeerConnectionCache {
-        private final NetworkUtilities networkUtilities;
+        private final NetworkService networkService;
         private final Map<Integer, ConnectedPeer> peers = new HashMap<>();
 
-        public PeerConnectionCache(NetworkUtilities networkUtilities) {
-            this.networkUtilities = networkUtilities;
+        public PeerConnectionCache(NetworkService networkService) {
+            this.networkService = networkService;
         }
 
-        public NetworkUtilities.ConnectedPeer getConnectedPeer(PersistenceService.Peer peer) {
+        public NetworkService.ConnectedPeer getConnectedPeer(PersistenceService.Peer peer) {
             // look up peer in cache
             ConnectedPeer p = peers.get(peer.getID());
 
@@ -413,7 +514,7 @@ public abstract class NetworkUtilities {
             }
             if (p == null) {
                 // establish a new connection to Peer and save in cache
-                p = networkUtilities.connectToPeer(peer);
+                p = networkService.connectToPeer(peer);
 
                 if (p != null && p.isConnected()) {
                     addConnectedPeer(p);
@@ -431,11 +532,11 @@ public abstract class NetworkUtilities {
             }
         }
 
-        private void addConnectedPeer(NetworkUtilities.ConnectedPeer peer) {
+        private void addConnectedPeer(NetworkService.ConnectedPeer peer) {
             peers.put(peer.getID(), peer);
         }
 
-        private void removeConnectedPeer(NetworkUtilities.ConnectedPeer peer) {
+        private void removeConnectedPeer(NetworkService.ConnectedPeer peer) {
             peers.remove(peer.getID());
         }
     }

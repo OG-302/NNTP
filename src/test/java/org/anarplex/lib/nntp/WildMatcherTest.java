@@ -1,4 +1,4 @@
-package org.anarplex.lib.nntp.utils;
+package org.anarplex.lib.nntp;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
