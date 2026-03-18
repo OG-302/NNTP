@@ -26,6 +26,15 @@ public interface PolicyService extends AutoCloseable {
     boolean isIHaveTransferAllowedBy(IdentityService.Subject submitter);
 
 
+    /**
+     * This method is called when a new Article is received from a client or a Peer.  The implementer should
+     * indicate via the return value whether the article should be kept for subsequent review (Allow), ignored and
+     * thus not processed (Ignore) or banned such that any Article with this messageId will never be accepted in the
+     * future (Ban).
+     * This method presents implementations with the opportunity to examine the article and its headers, and from that
+     * determine whether this is a "legitimate" article or not.  Exactly what constitutes a "legitimate" article is
+     * up to the implementer to determine, but it could, for instance, include a valid signed hash of the Article's body.
+     */
     ArticleReviewOutcome reviewArticle(Specification.Article article,
                                        Specification.ArticleSource articleSource,
                                        IdentityService.Subject sender);
@@ -37,11 +46,10 @@ public interface PolicyService extends AutoCloseable {
     }
 
     /**
-     * Provides the implementer with a supplied Article Newsgroup association which has already been stored in the
-     * datastore and which has already had its NewsgroupArticle associations created, according to the Article's
-     * Newsgroups header field.
-     * The implementer should then decide whether the article should be allowed to be posted to the newsgroup, rejected
-     * or the decision deferred until the next review.  The article can be posted or rejected via the calls
+     * Provides the implementer with an Article-Newsgroup association which has already been stored in the
+     * datastore, according to the Article's Newsgroups header field.
+     * The implementer should decide whether the article should be allowed to be posted to the newsgroup, or rejected,
+     * or the decision deferred for a subsequent review.  The article can be posted or rejected via the calls
      * PendingNewsgroupArticle.publish() and PendingNewsgroupArticle.reject().  Furthermore, the entire article can be
      * banned via the call StoredArticle.ban().
      */

@@ -4,10 +4,12 @@ This is a Java implementation of the NNTP protocol defined by [RFC-3977](https:/
 1) a __Server__ component which responds to NNTP Client requests (such as LISTGROUP, ARTICLE, POST, IHAVE, etc.), and
 2) a __Peer__ component which connects to other NNTP Servers to exchange new newsgroups and articles.
 
-The library is implemented as the Java package [org.anarplex.lib.nntp](https://github.com/OG-302/NNTP/tree/main/src/main/java/org/anarplex/lib/nntp).
-It is a library and not a standalone application.  It is intended to be used by applications and thus has several extension points such as:
-1. the ability to define a custom Persistence Store in which newsgroups and articles are stored (this could be based on a database or a file system),
-2. the ability to define custom Policies under which to handle NNTP Client POSTs, etc based on many factors, and
-3. the ability to define a custom Network Transport Layer (not restricted to TCP/IP).
+The library is implemented as the Java package ([org.anarplex.lib.nntp](https://github.com/OG-302/NNTP/tree/main/src/main/java/org/anarplex/lib/nntp)) and is intended to be used by applications needing NNTP server/peer capabilities.  
+
+As a general-purpose Library, several implementation details are deferred for the  Application to implement.  Such details include:
+1. Persistence Storage, where newsgroups, articles and various other domain entities are stored.  This Library uses an abstract domain-specific Entity Model ([PersistenceService](https://github.com/OG-302/NNTP/tree/main/src/main/java/org/anarplex/lib/nntp/PersistenceService.java)) that Applications will implement and could be realized as a relational database, File System, or other storage mechanism,
+2. Policies for accepting Articles.  This library uses the abstract [PolicyService class](https://github.com/OG-302/NNTP/tree/main/src/main/java/org/anarplex/lib/nntp/PolicyService.java) to offer the Application an opportunity to review and determine which Articles are to be published, ignored, or banned. And,
+3. Network Transport which is abstracted to [NetworkServices class](https://github.com/OG-302/NNTP/tree/main/src/main/java/org/anarplex/lib/nntp/NetworkService.java) to allow Applications to implement custom transport layers which could, for example, use TCP/IP sockets or other transport protocols.
+
 
 
