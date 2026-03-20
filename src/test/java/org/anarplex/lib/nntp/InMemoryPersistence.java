@@ -13,6 +13,8 @@ public class InMemoryPersistence extends PersistenceService {
 
     private final Map<Specification.NewsgroupName, TestPublishedNewsgroup> groups = new LinkedHashMap<>();
     private final Map<Specification.MessageId, TestStoredArticle> articles = new HashMap<>();
+    private final Set<String> savedIds = new HashSet<>();
+    private final Map<String, String> savedValues = new HashMap<>();
 
     @Override protected void init() {}
     @Override protected void checkpoint() {}
@@ -118,9 +120,6 @@ public class InMemoryPersistence extends PersistenceService {
     @Override
     protected Iterator<Peer> getPeers() { return Collections.emptyIterator(); }
 
-    @Override
-    protected void deleteFeed(Feed feed) { /* not needed */ }
-
     // ---- Associations ----
     @Override
     protected PendingArticle addAssociation(StoredArticle storedArticle, StoredNewsgroup newsgroup) {
@@ -134,10 +133,28 @@ public class InMemoryPersistence extends PersistenceService {
 
     // ---- Bans ----
     @Override
-    protected void insertKey(String key) { /* no-op */ }
+    protected void saveId(String key) { savedIds.add(key); }
 
     @Override
-    protected boolean existsKey(String key) { return false; }
+    protected boolean existsId(String key) { return savedIds.contains(key); }
+
+    /**
+     * Persists the supplied value in the database.  The value is associated with the supplied key.
+     * If the key already exists, then the value is updated.  If the key does not exist, then it is created.
+     * If the value is null, then the key and its value are deleted.
+     */
+    @Override
+    protected void saveValue(String key, String value) {
+        savedValues.put(key, value);
+    }
+
+    /**
+     * Retrieves the value associated with the supplied key.  Returns null if no such key exists.
+     */
+    @Override
+    protected String fetchValue(String key) {
+        return savedValues.get(key);
+    }
 
     @Override
     protected void deletePeer(Peer peer) { /* no-op for tests */ }
@@ -196,6 +213,7 @@ public class InMemoryPersistence extends PersistenceService {
         }
 
         @Override protected Feed addFeed(Peer peer) { return null; }
+        @Override protected void deleteFeed(Feed feed) { /* not needed */ }
         @Override public Feed[] getFeeds() { return new Feed[0]; }
         @Override public int numPendingArticles() { return 0; }
         @Override public Iterable<? extends PendingArticle> getPendingArticles() { return List.of(); }
@@ -282,13 +300,14 @@ public class InMemoryPersistence extends PersistenceService {
             this.publishedAt = publishedAt;
         }
 
+        @Override protected void reject() { /* no-op */ }
         @Override public Specification.ArticleNumber getArticleNumber() { return number; }
         @Override public Instant getPublicationTime() { return publishedAt; }
         @Override protected StoredNewsgroup getNewsgroup() { return group; }
         @Override protected StoredArticle getArticle() { return article; }
     }
 
-    class TestPendingArticle extends PendingArticle {
+    static class TestPendingArticle extends PendingArticle {
         private final TestStoredArticle article;
         private final TestPublishedNewsgroup group;
 

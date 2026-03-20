@@ -405,19 +405,22 @@ public class ProtocolEngineTest {
         protected Iterator<Peer> getPeers() { return Collections.emptyIterator(); }
 
         @Override
-        protected void deleteFeed(Feed feed) { throw new UnsupportedOperationException("Not used"); }
-
-        @Override
         protected PendingArticle addAssociation(StoredArticle storedArticle, StoredNewsgroup newsgroup) { throw new UnsupportedOperationException("Not used"); }
 
         @Override
         protected void deleteAssociation(NewsgroupArticle newsgroupArticle) { throw new UnsupportedOperationException("Not used"); }
 
         @Override
-        protected void insertKey(String key) { /* no-op */ }
+        protected void saveId(String key) { /* no-op */ }
 
         @Override
-        protected boolean existsKey(String key) { return false; }
+        protected boolean existsId(String key) { return false; }
+
+        @Override
+        protected void saveValue(String key, String value) { /* no-op */}
+
+        @Override
+        protected String fetchValue(String key) { return null; }
 
         @Override
         protected void deletePeer(Peer peer) { /* no-op for tests */ }

@@ -49,9 +49,10 @@ public interface PolicyService extends AutoCloseable {
      * Provides the implementer with an Article-Newsgroup association which has already been stored in the
      * datastore, according to the Article's Newsgroups header field.
      * The implementer should decide whether the article should be allowed to be posted to the newsgroup, or rejected,
-     * or the decision deferred for a subsequent review.  The article can be posted or rejected via the calls
-     * PendingNewsgroupArticle.publish() and PendingNewsgroupArticle.reject().  Furthermore, the entire article can be
-     * banned via the call StoredArticle.ban().
+     * or the decision deferred for a later review.  The article can be posted or rejected via the calls
+     * PendingNewsgroupArticle.publish() and PendingNewsgroupArticle.reject() respectively.  Furthermore, the entire
+     * article (which may appear in more than one Newsgroup) can be banned from all Newsgroups via the call
+     * StoredArticle.ban().
      */
     void reviewPosting(PersistenceService.PendingArticle submission);
 

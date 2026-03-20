@@ -1,8 +1,5 @@
 package org.anarplex.lib.nntp;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.Instant;
 import java.util.Iterator;
 import java.util.Set;
@@ -163,6 +160,11 @@ public abstract class PersistenceService {
         public abstract boolean isPublished();
     }
 
+    /**
+     * A StoredNewsgroup is a Newsgroup that has been added to the datastore but does not have any PublishedArticles
+     * associated with it.
+     * As soon as at least one PublishedArticle appears in this newsgroup, it is promoted to a PublishedNewsgroup.
+     */
     public abstract static class StoredNewsgroup extends Specification.Newsgroup {
         protected StoredNewsgroup(Specification.NewsgroupName name, String description, Specification.PostingMode postingMode, String createdBy) {
             super(name, description, postingMode, createdBy);
@@ -185,12 +187,15 @@ public abstract class PersistenceService {
          * Returns all the Pending Articles currently within this newsgroup
          */
         public abstract Iterable<? extends PendingArticle> getPendingArticles();
+
+        /**
+         * Removes this Feed from the Newsgroup but does not delete the Peer associated with the Feed.
+         */
+        protected abstract void deleteFeed(Feed feed);
     }
 
     /**
-     * Newsgroup is an entity that contains a list of Articles and ArticleNumbers.  The article numbers are
-     * created from a monotonically increasing sequence based on the number of the last added article. The name of the
-     * newsgroup is immutable.
+     * A PublishedNewsgroup is a Newsgroup that contains at least one PublishedArticle.
      */
     public abstract static class PublishedNewsgroup extends StoredNewsgroup {
 
@@ -246,39 +251,52 @@ public abstract class PersistenceService {
     }
 
     /**
-     * Removes this Feed from the Newsgroup, but does not delete the Peer associated with the Feed.
+     * A NewsgroupArticle is an association between a StoredArticle and a StoredNewsgroup.
+     * As all Articles are associated with at least one Newsgroup, therefore each Article has at least one such
+     * association.  Whereas a StoredNewsgroup may not have any Articles associated with it and therefore may not have
+     * any such associations.
      */
-    protected abstract void deleteFeed(Feed feed);
-
     public abstract static class NewsgroupArticle {
         protected abstract StoredNewsgroup getNewsgroup();
         protected abstract StoredArticle getArticle();
     }
 
     /**
-     * Associates the supplied storedArticle with the supplied newsgroup.  This yields a PendingArticle.  The storedArticle must
-     * not yet be associated with a newsgroup.
+     * Associates the supplied storedArticle with the supplied newsgroup yielding a PendingArticle.
+     * If the storedArticle is already associated with this newsgroup, then returns that existing association.
      */
     protected abstract PendingArticle addAssociation(StoredArticle storedArticle, StoredNewsgroup newsgroup);
 
     /**
-     * Deletes this article-newsgroup association from the database, including any ArticleNumber, which might be
+     * Deletes this article-newsgroup association from the persistent store, including any ArticleNumber, which might be
      * related to this association.
      */
     protected abstract void deleteAssociation(NewsgroupArticle newsgroupArticle);
 
     /**
-     * A PendingArticle is one that has not been assigned an ArticleNumber.  It is a candidate for review.
+     * A PendingArticle is an Article associated with a particular Newsgroup that has not been published or rejected.
+     * It is a candidate for review by the PolicyService's reviewPosting() method.
      */
     public abstract static class PendingArticle extends NewsgroupArticle {
         /**
-         * Assigns the next ArticleNumber from this Newsgroup's sequence to this StoredArticle.  In doing so, this method
-         * transforms this PendingArticle into a PublishedArticle.
+         * Publishes this PendingArticle, causing it to be:
+         * a) promoted to the PublishedArticle subtype,
+         * b) assigned the next ArticleNumber from this Newsgroup's ArticleNumber sequence,
+         * c) setting its PublicationTime to the instant this method was invoked, and
+         * d) promoting the associated Newsgroup to a PublishedNewsgroup if not already the case.
          */
         protected abstract void publish();
+
+        /**
+         * Rejects this PendingArticle, causing it to be removed from the associated Newsgroup.
+         */
         protected abstract void reject();
     }
 
+    /**
+     * A PublishedArticle is an Article associated with a particular Newsgroup that has been published via the
+     * PendingArticle's publish() method.
+     */
     public abstract static class PublishedArticle extends NewsgroupArticle {
         /**
          * Returns the immutable ArticleNumber assigned to this StoredArticle in this Newsgroup. Never null.
@@ -290,13 +308,21 @@ public abstract class PersistenceService {
          * article was assigned its ArticleNumber in this newsgroup.
          */
         public abstract Instant getPublicationTime();
+
+        /**
+         * Rejects this PublishedArticle, causing it to be:
+         * a) removed from the associated Newsgroup,
+         * b) releasing its associated ArticleNumber (never to be re-used), and
+         * c) demoting the associated PublishedNewsgroup to a StoredNewsgroup if this were the only PublishedArticle.
+         */
+        protected abstract void reject();
     }
 
     /**
      * A Feed is a source of articles and metadata from a particular Peer for a particular Newsgroup.
      * Note, a newsgroup may have multiple feeds if there are different Peers hosting the same newsgroup.
      * A feed maintains the state (highest article number and time) of the last sync with the Peer and includes
-     * the highest article number reported by the peer.
+     * the highest article number reported by the Peer.
      */
     public abstract static class Feed {
         // the time (using the Peer's clock) of our last successful (pull) sync of articles from the Peer
@@ -357,12 +383,6 @@ public abstract class PersistenceService {
      */
     protected abstract void deletePeer(Peer peer);
 
-    static class ExistingArticleException extends Exception {
-        public ExistingArticleException(String message) {
-            super(message);
-        }
-    }
-
     public static class ExistingPeerException extends Exception {
         public ExistingPeerException(String message) {
             super(message);
@@ -370,14 +390,26 @@ public abstract class PersistenceService {
     }
 
     /**
-     * Persists the supplied key in the database
+     * Persists the supplied identifier in the database.
      */
-    protected abstract void insertKey(String key);
+    protected abstract void saveId(String id);
 
     /**
-     * Determines if the supplied key exists in the database as a persisted key.
+     * Determines if the supplied identifier was previously persisted via the saveId() method.
      */
-    protected abstract boolean existsKey(String key);
+    protected abstract boolean existsId(String id);
+
+    /**
+     * Persists the supplied value in the database.  The value is associated with the supplied key.
+     * If the key already exists, then the value is updated.  If the key does not exist, then it is created.
+     * If the value is null, then the key and its value are deleted.
+     */
+    protected abstract void saveValue(String key, String value);
+
+    /**
+     * Retrieves the value associated with the supplied key.  Returns null if no such key exists.
+     */
+    protected abstract String fetchValue(String key);
 
     /**
      * This method identifies whether the supplied messageId is known to the datastore.  A known messageId maybe a
@@ -396,20 +428,20 @@ public abstract class PersistenceService {
     }
 
     public boolean isBanned(Specification.MessageId messageId) {
-        return existsKey(Utilities.Cryptography.sha256(messageId.getValue()));
+        return existsId(Utilities.Cryptography.sha256(messageId.getValue()));
     }
 
     public boolean isBanned(Specification.NewsgroupName name) {
-        return existsKey(Utilities.Cryptography.sha256(name.getValue()));
+        return existsId(Utilities.Cryptography.sha256(name.getValue()));
     }
 
     public void ban(Specification.MessageId messageId) {
-        insertKey(Utilities.Cryptography.sha256(messageId.getValue()));
+        saveId(Utilities.Cryptography.sha256(messageId.getValue()));
         deleteArticle(messageId);
     }
 
     public void ban(Specification.NewsgroupName newsgroupName) {
-        insertKey(Utilities.Cryptography.sha256(newsgroupName.getValue()));
+        saveId(Utilities.Cryptography.sha256(newsgroupName.getValue()));
         deleteNewsgroup(getGroupByName(newsgroupName));
     }
 }
